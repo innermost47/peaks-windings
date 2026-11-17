@@ -73,21 +73,3 @@ Both tools read `*_z*.json` files, align labels along Z, and support `--z-min` /
 * **Solver:** Weighted least squares (`lsq`) via Eigen sparse Cholesky decomposition with weak zero-regularization.
 * **Zarr I/O:** Built-in Zarr v2/v3 reader (unsharded, C-order, little-endian; `none`/`blosc`/`zstd`/`gzip`) supporting local paths, `http(s)://`, and anonymous `s3://`. Chunk planes are fetched in parallel and cached across slices.
 * **Rendering:** Annotated outputs are drawn directly via OpenCV.
-
-## Repository Layout
-
-```
-vcpkg.json
-LICENSE
-README.md
-CMakeLists.txt   
-results/.gitkeep     
-src/main.cpp          CLI entry point, synthetic test, and slice loop
-src/windings.cpp/hpp  Core pipeline (masking, spires, peaks, crossings, solver, JSON)
-src/unroll_layer.cpp  Layer flattening and coordinate mapping
-src/export_3d.cpp     PLY/OBJ mesh generation
-src/layers.cpp/hpp    JSON ingestion and Z-axis label alignment
-src/zarr_reader.*     Local/remote Zarr volume reader
-src/parallel.hpp      Lightweight thread pool
-src/turbo.hpp         Turbo colormap LUT
-```
