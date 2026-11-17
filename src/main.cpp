@@ -33,8 +33,8 @@ namespace
     {
         pw::Params params;
         std::string scroll_url;
-        long long z_start = 8000;
-        long long z_count = 9000;
+        long long z_start = 0;
+        long long z_count = 25000;
         long long every = 1;
         std::string solver = "lsq";
         std::string output_dir = "results/json";
