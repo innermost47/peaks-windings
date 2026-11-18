@@ -3,5 +3,7 @@ results/*
 !results/.gitkeep
 vcpkg_installed
 main.bat
+scrolls.cfg
+NOTES.md
 __pycache__
 CLAUDE.md

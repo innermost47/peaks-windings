@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Anthony Charretier
+#include "scroll_settings.hpp"
 #include "zarr_reader.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -126,8 +127,10 @@ namespace
     struct Options
     {
         std::string coords;
-        std::string scroll;
-        std::string output; // empty: <folder of the coords>/sections/
+        std::string scroll;                 // empty: the CT volume recorded for the scroll
+        std::string scroll_name = "scroll"; // results/json/<scroll name>/ holds the recorded volumes
+        std::string results_dir;            // empty: results/json/<scroll name>
+        std::string output;                 // empty: <folder of the coords>/sections/
         int sections = 8;
         std::vector<int> z_list;
         int margin = 150;
@@ -141,7 +144,10 @@ namespace
     {
         std::cout << "Draws an unrolled surface back onto the raw CT slices, to check that it stays on one sheet.\n\n"
                      "  --coords FILE       the _coords.npy file written by unroll_layer (required)\n"
-                     "  --scroll URL        the CT volume given to unroll_layer: path or URL of a zarr store (required)\n"
+                     "  --scroll URL        the CT volume given to unroll_layer: path or URL of a zarr store (default:\n"
+                     "                      the one recorded in <results dir>/scroll_settings.json)\n"
+                     "  --scroll-name NAME  name of the dataset, the same as given to the other tools (default: scroll)\n"
+                     "  --results-dir DIR   folder of the JSON results and their settings (default: results/json/NAME)\n"
                      "  --sections N        slices drawn, evenly spaced over the image (default 8)\n"
                      "  --z Z1,Z2,...       draw these slices instead\n"
                      "  --output DIR        (default: <folder of the coords>/sections/)\n"
@@ -149,7 +155,7 @@ namespace
                      "  --max-size PX       longest side of an output image (default 2500)\n"
                      "  --jump F            a step longer than F times the median step is marked as a jump (default 5)\n"
                      "  --threads N         worker threads (default 0: all)\n"
-                     "  --connections N     parallel http downloads (default 32)\n";
+                     "  --connections N     parallel http downloads, or file reads of a local store (default 32)\n";
     }
 
     Options parse(int argc, char **argv)
@@ -180,6 +186,10 @@ namespace
                 o.coords = value;
             else if (arg == "--scroll")
                 o.scroll = value;
+            else if (arg == "--scroll-name")
+                o.scroll_name = value;
+            else if (arg == "--results-dir")
+                o.results_dir = value;
             else if (arg == "--output")
                 o.output = value;
             else if (arg == "--sections")
@@ -205,8 +215,20 @@ namespace
             else
                 throw std::invalid_argument("unknown option " + arg + " (see --help)");
         }
-        if (o.coords.empty() || o.scroll.empty())
-            throw std::invalid_argument("--coords and --scroll are required (see --help)");
+        if (o.coords.empty())
+            throw std::invalid_argument("--coords is required (see --help)");
+        if (o.scroll_name.empty())
+            throw std::invalid_argument("--scroll-name cannot be empty");
+        if (o.results_dir.empty())
+            o.results_dir = (std::filesystem::path("results") / "json" / o.scroll_name).string();
+        if (o.scroll.empty())
+        {
+            const pw::ScrollSettings settings = pw::ScrollSettings::load(o.results_dir);
+            if (!settings.ct.known())
+                throw std::invalid_argument("--scroll is required: no CT volume is recorded in " + settings.file());
+            o.scroll = settings.ct.store;
+            std::printf("--> CT volume: %s (recorded)\n", o.scroll.c_str());
+        }
         if (o.output.empty())
         {
             const std::filesystem::path parent = std::filesystem::path(o.coords).parent_path();

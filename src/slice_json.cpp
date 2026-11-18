@@ -96,6 +96,23 @@ namespace pw
             s += ",\"track\":" + std::to_string(result.peaks[i].track);
             s += "}";
         }
+        s += "],\"sheets\":[";
+        for (size_t i = 0; i < result.sheets.size(); ++i)
+        {
+            const SheetTrace &t = result.sheets[i];
+            if (i)
+                s += ",";
+            s += "{\"winding_label\":" + std::to_string(t.winding) + ",\"pull\":";
+            put_number(s, t.pull, 2);
+            s += ",\"xy\":[";
+            for (size_t k = 0; k < t.points.size(); ++k)
+            {
+                if (k)
+                    s += ",";
+                s += std::to_string(t.points[k].x) + "," + std::to_string(t.points[k].y);
+            }
+            s += "]}";
+        }
         s += "]}";
         return s;
     }

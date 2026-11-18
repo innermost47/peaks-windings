@@ -11,7 +11,7 @@ C++ implementation of the layered volume segmentation, unrolling, and 3D meshing
 
 ## Build
 
-Requires OpenCV (`core`, `imgproc`, `imgcodecs`), Eigen 3, libcurl, c-blosc, and nlohmann-json (`zstd` and `zlib` are optional).
+Requires OpenCV (`core`, `imgproc`, `imgcodecs`), libcurl, c-blosc, and nlohmann-json (`zstd` and `zlib` are optional).
 
 ### Windows (VS 2022 + vcpkg)
 
@@ -26,7 +26,7 @@ cmake --build build --config Release
 ### Linux
 
 ```sh
-sudo apt install build-essential cmake ninja-build libopencv-dev libeigen3-dev libcurl4-openssl-dev \
+sudo apt install build-essential cmake ninja-build libopencv-dev libcurl4-openssl-dev \
                  libblosc-dev libzstd-dev zlib1g-dev nlohmann-json3-dev
 cmake -S . -B build -G Ninja
 cmake --build build
@@ -44,7 +44,6 @@ results/
 ├── json/NAME/                  peaks_windings: NAME_z<z>.json, one file per slice
 ├── png/NAME/layer_<N>/         unroll_layer: images and pixel coordinates of layer N
 │   └── sections/               overlay_sections: the unrolled layer drawn on raw slices
-├── csv/NAME/layer_<N>/         unroll_layer: centres.csv (centre of the layer in every slice)
 └── 3D/
     ├── ply/                    export_3d: NAME_pointcloud.ply
     └── obj/                    export_3d: scroll_NAME.obj
@@ -54,6 +53,22 @@ Folders are created as needed. `--output-dir` (`peaks_windings`), `--results-dir
 `--results-dir` (`export_3d`) and `--output` (`overlay_sections`) override the default paths.
 
 ## Usage
+
+### Recorded volumes (`scroll_settings.json`)
+
+Each scroll keeps the volumes it was made from in `results/json/NAME/scroll_settings.json`, so they are given once:
+
+```sh
+peaks_windings --scroll-name dataset --scroll-url D:/data/surface.zarr --ct <ct_zarr_path_or_url> --z-start 0
+unroll_layer --scroll-name dataset --layer N
+overlay_sections --scroll-name dataset --coords results/png/dataset/layer_N/unrolled_layer_N_coords.npy
+```
+
+* `surface`: the volume `peaks_windings` read, with its shape: the voxels of every result file. Written at each run;
+  `--scroll-url` defaults to it. A volume of another shape is refused for the same results (use another name).
+* `ct`: the CT volume sampled by `unroll_layer` and drawn by `overlay_sections`. Given by `peaks_windings --ct` or by
+  `--scroll` of either tool (the last one given is kept); `--scroll` defaults to it. `unroll_layer` requires its shape
+  to be the shape of `surface`.
 
 ### Label extraction (`peaks_windings`)
 
@@ -68,12 +83,15 @@ Options:
 
 * `--scroll-url URL`: Zarr store to read: local directory, `http(s)://` or anonymous `s3://`. A multiscale store
   is read at its root, or at `0/` when the root is a group (append `/2`, etc. to the URL to pick another level).
+  Default: the surface volume recorded for the scroll.
+* `--ct URL`: The CT volume of the same scroll, at the same resolution, recorded for `unroll_layer` and
+  `overlay_sections`.
 * `--scroll-name NAME`: Dataset name, used in file names and folders (default `scroll`).
 * `--output-dir DIR`: Output folder (default `results/json/NAME/`).
 * `--z-start N`, `--z-count N`, `--every N`: Slices processed (stops at the end of the volume).
 * `--threads N`: Worker threads (`0` = all available).
 * `--centre-jobs N`: Concurrent candidate centres evaluated (default `4`; reduce to lower RAM usage).
-* `--connections N`: Parallel HTTP downloads (default `32`).
+* `--connections N`: Parallel HTTP downloads, or parallel file reads of a local store (default `32`).
 * `--cache-gb F`: Memory budget for decoded chunk planes (default `2` GiB).
 * `--image FILE`: Process a single image instead of a Zarr store.
 * `--timings`: Log per-step execution times.
@@ -83,40 +101,37 @@ See `--help` for the detection parameters (`--peaks`, `--rays`, `--track-radius`
 ### Unrolling (`unroll_layer`)
 
 ```sh
-unroll_layer --scroll-name dataset --scroll <zarr_path_or_url> [--layer N]
-unroll_layer --scroll-name dataset --scroll <zarr_path_or_url> --layer N --summits each --tracks 3
+unroll_layer --scroll-name dataset [--scroll <zarr_path_or_url>] [--layer N | --layer N,M,... | --layer all]
 ```
 
 The JSON results are read from `results/json/NAME/` (`--results-dir` to read elsewhere). Without `--layer`, the
-layer with the most points is unrolled.
+layer with the most points is unrolled; a list unrolls each layer given, `all` every layer of at least
+`--min-points` points (default `1000`), densest first. The labels are aligned once and the CT volume opened once for
+all of them; a layer with nothing to unroll is skipped. Without `--scroll`, the recorded CT volume is sampled.
 
-> **Coordinates:** the volume given to `--scroll` must have the same resolution as the one given to
-> `peaks_windings`: the points of the JSON files are in voxels of that volume. Check that both tools print the same
-> `shape (z, y, x)` at startup.
+> **Coordinates:** the CT volume must have the same shape as the volume `peaks_windings` read: the points of the
+> JSON files are in voxels of that volume. `unroll_layer` stops when the recorded shapes differ.
 
-Two modes:
+The layer is followed along its own sheet, slice after slice, from the sheet traces written by `peaks_windings`
+(result files written before the traces existed cannot be unrolled: run `peaks_windings` again). Every column of the
+image is one position along the sheet, the same in every slice. Outputs in `results/png/NAME/layer_<N>/`:
 
-* **`--summits all`** (default): every summit together. The layer is described in every slice by its radius around
-  a centre (a circle fitted to the layer, smoothed along Z), then sampled from 0 to 360 degrees.
-  Outputs in `results/png/NAME/layer_<N>/`:
-  * `unrolled_layer_<N>_all.png`: annotated preview (angle, slice Z);
-  * `unrolled_layer_<N>_all_full.png`: 8-bit unrolled image, one row per slice;
-  * `unrolled_layer_<N>_all_coords.npy`: float32 `(rows, cols, 3)` volume coordinates `(x, y, z)` of every pixel
-    (NaN where nothing was sampled);
+* `unrolled_layer_<N>.png`: annotated preview (position along the sheet, slice Z);
+* `unrolled_layer_<N>_full.png`: 8-bit unrolled image, one row per slice;
+* `unrolled_layer_<N>_coords.npy`: float32 `(rows, cols, 3)` volume coordinates `(x, y, z)` of every pixel (NaN where
+  nothing was sampled).
 
-  and in `results/csv/NAME/layer_<N>/`:
-  * `centres.csv`: `z, cx, cy`, the smoothed centre of every slice (a linear drift along Z means the axis of the
-    volume is tilted).
+Options:
 
-  Flags: `--max-pull F` (points pulled further than F sigma are left out, default `3`), `--fill-deg F` (default
-  `10`), `--fill-z N` (default `25`), `--smooth-z N` (default `9`), `--smooth-cols N` (default `3`),
-  `--centre fit|files` (default `fit`), `--centre-window N` (default `101`).
-* **`--summits each`**: one image per summit, along the largest continuous arc of the layer around it. Outputs
-  `unrolled_layer_<N>_clean_track<T>.png`, `..._full.png` and `..._coords.npy` for every summit `T`.
-  Flags: `--tracks N` (default `5`), `--track N`, `--max-jump F` (default `5`x median step).
-
-Common flags: `--slab N` (MIP thickness, default `6`), `--step-z N`, `--max-width N` (default `1600`),
-`--sectors N` (default `16`), `--block-mb F` (default `256`), `--z-min` / `--z-max`.
+* `--max-pull F`: Traces whose turn is in doubt (pulled further than F sigma by the labelling) are left out
+  (default `3`; `0`: none is).
+* `--max-gap F`, `--max-turn F`: A trace carries on from the end of another across a gap of at most F voxels
+  (default `60`), turning by at most F degrees (default `45`).
+* `--fill-px F`: Holes along the sheet up to F voxels long are bridged straight (default `30`).
+* `--cache-mb F`: Only the volume chunks the slab actually crosses are read, one layer of the chunk grid along Z at a
+  time; at most F MB of decoded chunks are held at once (default `1024`).
+* `--slab N` (MIP thickness, default `6`), `--step-z N`, `--max-width N` (default `1600`), `--z-min` / `--z-max`,
+  `--threads N`, `--connections N`.
 
 ### 3D export (`export_3d`)
 
@@ -140,7 +155,7 @@ Options:
 ### Overlay check (`overlay_sections`)
 
 ```sh
-overlay_sections --coords results/png/dataset/layer_0/unrolled_layer_0_all_coords.npy --scroll <zarr_path_or_url>
+overlay_sections --scroll-name dataset --coords results/png/dataset/layer_0/unrolled_layer_0_coords.npy
 ```
 
 Draws the path of an unrolled layer onto a few raw CT slices, to check that it stays on one sheet. Steps longer than
@@ -149,7 +164,8 @@ Draws the path of an unrolled layer onto a few raw CT slices, to check that it s
 Options:
 
 * `--coords FILE`: The `_coords.npy` file written by `unroll_layer` (required).
-* `--scroll URL`: The CT volume given to `unroll_layer` (required).
+* `--scroll URL`: The CT volume given to `unroll_layer` (default: the one recorded for the scroll).
+* `--scroll-name NAME`, `--results-dir DIR`: Where the recorded volumes are found (default `results/json/NAME/`).
 * `--sections N`: Slices drawn, evenly spaced over the image (default `8`), or `--z Z1,Z2,...` to pick them.
 * `--output DIR`: Output folder (default `sections/` next to the coords file).
 * `--margin PX` (default `150`), `--max-size PX` (default `2500`), `--jump F` (default `5`), `--threads N`,
@@ -179,8 +195,13 @@ A slice is read like a contour map: every sheet is a contour line, and its windi
 * **Continuity along Z:** Every slice hands its solved sheet points to the next one; a point lying within 2 px of one
   of them votes for the same winding, through a free offset so that only the relations between pieces are carried
   over. This settles what a single slice leaves ambiguous.
-* **Pull:** Every crossing carries the share of its piece's observations left unmet, written as sigmas;
-  `unroll_layer --max-pull` leaves out the doubtful ones.
+* **Sheet traces:** Besides the crossings of the rays, every result file holds the solved sheets themselves
+  (`"sheets"`): the skeleton walked branch by branch and cut wherever the winding changes, one point every 3 px.
+* **Pull:** Every crossing and every trace carries the share of its pieces' observations left unmet, written as
+  sigmas; `unroll_layer --max-pull` leaves out the doubtful ones.
+* **Unrolling along the sheet:** In every slice, each trace of the layer is rigid along itself (position u = offset
+  ± arc length). It inherits u from the sheet of the previous slice where it lies on it, or carries on the u of the
+  trace it continues across a junction or a break; the first slice starts from its longest trace.
 * **Label alignment:** Labels are aligned between consecutive slices by majority vote over matched points of the same rays; a shift is applied only when enough points agree.
 * **Zarr I/O:** Built-in Zarr v2/v3 reader (unsharded, C-order, little-endian; `none`/`blosc`/`zstd`/`gzip`) supporting local paths, `http(s)://`, and anonymous `s3://`. Chunk planes are fetched in parallel and cached across slices.
 * **Rendering:** Annotated outputs are drawn directly via OpenCV.

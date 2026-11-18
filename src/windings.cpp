@@ -9,6 +9,7 @@
 #include "sheet_directions.hpp"
 #include "sheet_pieces.hpp"
 #include "sheet_skeleton.hpp"
+#include "sheet_traces.hpp"
 #include "summits.hpp"
 #include "voting_solver.hpp"
 #include "winding_graph.hpp"
@@ -121,14 +122,11 @@ namespace pw
             return SpotHeights(std::move(spots));
         }
 
-        // The solved crossings, ray by ray.
-        void write_lines(const std::vector<Ray> &rays, const std::vector<Peak> &peaks, const SheetSkeleton &skeleton,
-                         const SheetPieces &pieces, const Trial &trial, SliceResult &result)
+        // The pull of every piece: the share of the weight of its observations left unmet, as sigmas (a piece most
+        // of whose evidence disagrees with its label is beyond what unroll_layer keeps by default).
+        std::vector<float> piece_pulls(const SheetPieces &pieces, const Trial &trial)
         {
             const WindingGraph &graph = *trial.graph;
-            const VotingSolver<IntegerShift>::Result &solution = trial.solution;
-            // pull of a piece: the share of the weight of its observations left unmet, as sigmas (a piece most of whose
-            // evidence disagrees with its label is beyond what unroll_layer keeps by default)
             std::vector<double> total(pieces.pieces(), 0.0), unmet(pieces.pieces(), 0.0);
             for (size_t i = 0; i < graph.observations().size(); ++i)
             {
@@ -137,12 +135,40 @@ namespace pw
                     if (s >= 0)
                     {
                         total[pieces.piece_of(s)] += graph.observations()[i].weight;
-                        if (solution.residual[i] != 0)
+                        if (trial.solution.residual[i] != 0)
                             unmet[pieces.piece_of(s)] += graph.observations()[i].weight;
                     }
             }
-            auto pull = [&](int piece)
-            { return total[piece] > 0 ? 2 * TURN_IN_SIGMAS * unmet[piece] / total[piece] : 0.0; };
+            std::vector<float> pull(pieces.pieces(), 0.f);
+            for (int p = 0; p < pieces.pieces(); ++p)
+                if (total[p] > 0)
+                    pull[p] = static_cast<float>(2 * TURN_IN_SIGMAS * unmet[p] / total[p]);
+            return pull;
+        }
+
+        // The solved sheets along the skeleton.
+        std::vector<SheetTrace> sheet_traces(const SheetSkeleton &skeleton, const SheetPieces &pieces,
+                                             const Trial &trial, const std::vector<float> &pull)
+        {
+            return trace_sheets(
+                skeleton,
+                [&](int node) -> std::optional<int>
+                {
+                    if (!trial.solution.reached[pieces.piece_of(node)])
+                        return std::nullopt;
+                    return trial.graph->winding(node, trial.solution.label);
+                },
+                [&](int node)
+                { return pull[pieces.piece_of(node)]; });
+        }
+
+        // The solved crossings, ray by ray.
+        void write_lines(const std::vector<Ray> &rays, const std::vector<Peak> &peaks, const SheetSkeleton &skeleton,
+                         const SheetPieces &pieces, const Trial &trial, const std::vector<float> &pull,
+                         SliceResult &result)
+        {
+            const WindingGraph &graph = *trial.graph;
+            const VotingSolver<IntegerShift>::Result &solution = trial.solution;
             int crossing = 0;
             for (const Ray &ray : rays)
             {
@@ -160,7 +186,7 @@ namespace pw
                     const int node = pieces.node_of(site);
                     const int fragment = node >= 0 ? skeleton.nodes()[node].branch + 1 : 0;
                     line.crossings.push_back({c.x, c.y, graph.winding(site, solution.label),
-                                              graph.continuous_winding(site, solution.label), fragment, pull(piece)});
+                                              graph.continuous_winding(site, solution.label), fragment, pull[piece]});
                 }
                 if (!line.crossings.empty())
                     result.lines.push_back(std::move(line));
@@ -215,7 +241,9 @@ namespace pw
         result.timings.centre = seconds_since(t0);
 
         t0 = Clock::now();
-        write_lines(rays, peaks, skeleton, pieces, trial, result);
+        const std::vector<float> pull = piece_pulls(pieces, trial);
+        write_lines(rays, peaks, skeleton, pieces, trial, pull, result);
+        result.sheets = sheet_traces(skeleton, pieces, trial, pull);
         result.spots = spot_heights(pieces, trial);
         result.has_centre = trial.centre >= 0;
         if (result.has_centre)

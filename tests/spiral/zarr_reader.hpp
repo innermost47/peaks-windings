@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +26,10 @@ namespace pw
             return std::fabs(u - std::round(u)) * PITCH;
         }
     };
+    struct ChunkIndex
+    {
+        long long z = 0, y = 0, x = 0;
+    };
     class ZarrVolume
     {
     public:
@@ -35,6 +40,25 @@ namespace pw
         std::string description() const { return "synthetic spiral scroll"; }
         std::array<long long, 3> shape() const { return {400, 3000, 3000}; }
         std::array<long long, 3> chunks() const { return {128, 128, 128}; }
+        int cv_type() const { return CV_8UC1; }
+        std::vector<cv::Mat> read_chunks(const std::vector<ChunkIndex> &wanted) const
+        {
+            const auto c = chunks();
+            const int sizes[3] = {(int)c[0], (int)c[1], (int)c[2]};
+            std::vector<cv::Mat> out;
+            for (const ChunkIndex &w : wanted)
+            {
+                const int z0 = (int)(w.z * c[0]), y0 = (int)(w.y * c[1]), x0 = (int)(w.x * c[2]);
+                const std::vector<cv::Mat> planes =
+                    read_region(z0, z0 + sizes[0], y0, y0 + sizes[1], x0, x0 + sizes[2]);
+                cv::Mat chunk(3, sizes, CV_8UC1);
+                for (int z = 0; z < sizes[0]; ++z)
+                    for (int y = 0; y < sizes[1]; ++y)
+                        std::memcpy(chunk.ptr<unsigned char>(z, y), planes[z].ptr<unsigned char>(y), sizes[2]);
+                out.push_back(chunk);
+            }
+            return out;
+        }
         std::vector<cv::Mat> read_region(int z0, int z1, int y0, int y1, int x0, int x1) const
         {
             std::vector<cv::Mat> out;

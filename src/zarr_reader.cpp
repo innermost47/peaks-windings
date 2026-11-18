@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -42,28 +43,42 @@ namespace pw
             std::optional<std::string> get(const std::string &key) { return std::move(get_many({key})[0]); }
         };
 
+        // A zarr store in a local directory; the keys of one request are read in parallel by `readers` threads.
         class LocalStore : public Store
         {
         public:
-            explicit LocalStore(std::string root) : root_(std::move(root)) {}
+            LocalStore(const std::string &root, int readers) : root_(std::filesystem::u8path(root)), readers_(std::max(1, readers))
+            {
+                std::error_code ec;
+                if (!std::filesystem::is_directory(root_, ec))
+                    throw std::runtime_error("no such zarr directory: " + root);
+            }
 
             std::vector<std::optional<std::string>> get_many(const std::vector<std::string> &keys) override
             {
                 std::vector<std::optional<std::string>> out(keys.size());
-                for (size_t i = 0; i < keys.size(); ++i)
-                {
-                    std::ifstream f(root_ + "/" + keys[i], std::ios::binary);
-                    if (!f)
-                        continue;
-                    std::ostringstream ss;
-                    ss << f.rdbuf();
-                    out[i] = ss.str();
-                }
+                parallel_for(static_cast<int>(keys.size()), readers_, [&](int i, int)
+                             { out[i] = read_file(root_ / std::filesystem::u8path(keys[i])); });
                 return out;
             }
 
         private:
-            std::string root_;
+            // The whole file, or nothing when it does not exist (a missing chunk).
+            static std::optional<std::string> read_file(const std::filesystem::path &path)
+            {
+                std::ifstream f(path, std::ios::binary | std::ios::ate);
+                if (!f)
+                    return std::nullopt;
+                const std::streamsize size = f.tellg();
+                std::string data(static_cast<size_t>(std::max<std::streamsize>(size, 0)), '\0');
+                f.seekg(0);
+                if (size > 0 && !f.read(&data[0], size))
+                    throw std::runtime_error("could not read " + path.u8string());
+                return data;
+            }
+
+            std::filesystem::path root_;
+            int readers_;
         };
 
         size_t write_body(char *data, size_t size, size_t count, void *user)
@@ -206,7 +221,7 @@ namespace pw
                 return std::make_unique<HttpStore>(url, connections);
             if (starts_with(url, "file://"))
                 url = url.substr(7);
-            return std::make_unique<LocalStore>(url);
+            return std::make_unique<LocalStore>(url, connections);
         }
 
         // ------------------------------------------------------------------------------------------- metadata
@@ -471,6 +486,7 @@ namespace pw
 
             const std::vector<int64_t> &shape() const override { return meta_.shape; }
             const std::vector<int64_t> &chunks() const override { return meta_.chunks; }
+            int cv_type() const override { return CV_MAKETYPE(meta_.cv_depth, 1); }
 
             std::string description() const override
             {
@@ -605,6 +621,37 @@ namespace pw
                         buf.data() + (z - oz) * plane_bytes_ + (y - oy) * row_stride + (xa - ox) * item;
                     std::memcpy(out[z - z0].ptr(static_cast<int>(y - y0)) + (xa - x0) * item, src, (xb - xa) * item);
                 } });
+                return out;
+            }
+
+            std::vector<cv::Mat> read_chunks(const std::vector<ChunkIndex> &chunks) override
+            {
+                std::vector<std::string> keys;
+                keys.reserve(chunks.size());
+                for (const ChunkIndex &c : chunks)
+                {
+                    if (c.z < 0 || c.y < 0 || c.x < 0 || c.z * meta_.chunks[0] >= meta_.shape[0] || c.y >= ny_ ||
+                        c.x >= nx_)
+                        throw std::out_of_range("chunk (" + std::to_string(c.z) + ", " + std::to_string(c.y) + ", " +
+                                                std::to_string(c.x) + ") is outside the chunk grid");
+                    keys.push_back(chunk_key(c.z, static_cast<int>(c.y), static_cast<int>(c.x)));
+                }
+                std::vector<std::optional<std::string>> fetched = store_->get_many(keys);
+
+                const int sizes[3] = {static_cast<int>(meta_.chunks[0]), static_cast<int>(meta_.chunks[1]),
+                                      static_cast<int>(meta_.chunks[2])};
+                std::vector<cv::Mat> out(chunks.size());
+                const int threads = threads_ > 0 ? threads_ : hardware_threads();
+                parallel_for(static_cast<int>(chunks.size()), threads, [&](int i, int)
+                             {
+                cv::Mat& m = out[i];
+                if (!fetched[i]) {
+                    m = cv::Mat(3, sizes, CV_MAKETYPE(meta_.cv_depth, 1), cv::Scalar(meta_.fill_value));
+                    return;
+                }
+                m.create(3, sizes, CV_MAKETYPE(meta_.cv_depth, 1));
+                decode_chunk(meta_, *fetched[i], m.data, chunk_bytes_);
+                std::string().swap(*fetched[i]); });
                 return out;
             }
 

@@ -168,23 +168,10 @@ namespace pw
         }
 
         // The points of one result file with z_min <= z <= z_max, in file order (and its centre, when it gives one).
-        std::vector<Point> read_file(const std::string &path, int z_min, int z_max, Centre *centre = nullptr,
-                                     bool *has_centre = nullptr)
+        std::vector<Point> read_file(const std::string &path, int z_min, int z_max)
         {
             std::vector<Point> out;
             const json data = json::parse(read_text(path));
-            if (has_centre)
-            {
-                *has_centre = false;
-                const auto c = data.find("centre");
-                if (c != data.end() && c->is_object() && c->contains("x") && c->contains("y") && (*c)["x"].is_number() &&
-                    (*c)["y"].is_number())
-                {
-                    centre->x = (*c)["x"].get<double>();
-                    centre->y = (*c)["y"].get<double>();
-                    *has_centre = true;
-                }
-            }
             const bool has_z = data.contains("z") && data["z"].is_number();
             const int file_z = has_z ? data["z"].get<int>() : 0;
             if (!data.contains("lines"))
@@ -247,7 +234,6 @@ namespace pw
                 else if (here < it->second)
                     it->second = here;
                 ++survey.layer_points[label];
-                ++survey.track_points[label][slice[i].track];
             }
         }
 
@@ -292,12 +278,6 @@ namespace pw
         if (files.empty())
             throw std::runtime_error("[ERROR] No result files (<name>_z<digits>.json) found in '" + results_dir + "'.");
         return files;
-    }
-
-    int ray_count(const std::string &results_dir)
-    {
-        const json data = json::parse(read_text(result_files(results_dir)[0]));
-        return data.value("n_rays", 360);
     }
 
     std::vector<Point> load_points(const std::string &results_dir, int z_min, int z_max, int threads)
@@ -424,13 +404,8 @@ namespace pw
         {
             const size_t stop = std::min(by_z.size(), start + batch);
             std::vector<std::vector<Point>> read(stop - start);
-            std::vector<Centre> centres(stop - start);
-            std::vector<char> has_centre(stop - start, 0);
             parallel_for(static_cast<int>(stop - start), workers, [&](int i, int)
-                         {
-            bool has = false;
-            read[i] = read_file(files[by_z[start + i].second], z_min, z_max, &centres[i], &has);
-            has_centre[i] = has; });
+                         { read[i] = read_file(files[by_z[start + i].second], z_min, z_max); });
             for (size_t i = 0; i < read.size(); ++i)
             {
                 const size_t rank = by_z[start + i].second;
@@ -445,8 +420,6 @@ namespace pw
                     std::map<int, int> correction = align_labels(points);
                     return survey_of(points, std::move(correction));
                 }
-                if (has_centre[i] && by_z[start + i].first >= z_min && by_z[start + i].first <= z_max)
-                    survey.centres[static_cast<int>(by_z[start + i].first)] = centres[i];
                 if (parts.empty())
                     continue;
                 const int z = parts.begin()->first;
@@ -468,79 +441,91 @@ namespace pw
         return survey;
     }
 
-    std::vector<Point> load_layer(const std::string &results_dir, int z_min, int z_max, int threads,
-                                  const LayerSurvey &survey, int layer, const std::vector<int> &tracks)
+    namespace
     {
-        const std::vector<std::string> files = files_in_range(results_dir, z_min, z_max);
-        const std::set<int> wanted(tracks.begin(), tracks.end());
-        std::vector<std::vector<Point>> per_file(files.size());
-        parallel_for(static_cast<int>(files.size()), threads > 0 ? threads : hardware_threads(), [&](int i, int)
-                     {
-        std::vector<Point> kept;
-        for (Point& p : read_file(files[i], z_min, z_max)) {
-            const auto c = survey.correction.find(p.z);
-            const int shift = c == survey.correction.end() ? 0 : c->second;
-            if (p.winding - shift != layer) continue;
-            if (!wanted.empty() && !wanted.count(p.track)) continue;
-            p.winding -= shift;
-            kept.push_back(p);
-        }
-        per_file[i] = std::move(kept); });
-        std::vector<Point> points;
-        for (auto &v : per_file)
+        // The labels of slice z corrected as the survey says.
+        int correction_of(const LayerSurvey &survey, int z)
         {
-            points.insert(points.end(), v.begin(), v.end());
-            std::vector<Point>().swap(v);
+            const auto c = survey.correction.find(z);
+            return c == survey.correction.end() ? 0 : c->second;
         }
-        return points;
-    }
 
-    void for_each_layer_slice(const std::string &results_dir, int z_min, int z_max, int threads,
-                              const LayerSurvey &survey, int layer, const std::vector<int> &tracks,
-                              const std::function<void(int, const std::vector<Point> &)> &fn)
-    {
-        const std::vector<std::string> files = files_in_range(results_dir, z_min, z_max);
-        // in Z order when the names tell it (name order otherwise), a batch of files read at a time
-        std::vector<std::pair<long long, size_t>> order;
-        for (size_t r = 0; r < files.size(); ++r)
+        // The traces of one result file with z_min <= z <= z_max that lie on `layer` once corrected.
+        std::vector<Trace> read_traces(const std::string &path, int z_min, int z_max, const LayerSurvey &survey,
+                                       int layer)
         {
+            std::vector<Trace> out;
+            const json data = json::parse(read_text(path));
             long long z = 0;
-            order.emplace_back(z_of_name(files[r], z) ? z : LLONG_MAX, r);
-        }
-        std::stable_sort(order.begin(), order.end(), [](const auto &a, const auto &b)
-                         { return a.first < b.first; });
-        const std::set<int> wanted(tracks.begin(), tracks.end());
-        const int workers = threads > 0 ? threads : hardware_threads();
-        const size_t batch = static_cast<size_t>(std::max(1, 2 * workers));
-        std::map<int, std::vector<Point>> pending; // slices not given yet (a batch may end in the middle of one)
-        auto flush = [&](long long below) {        // gives the slices whose z is below `below`
-            while (!pending.empty() && pending.begin()->first < below)
+            if (data.contains("z") && data["z"].is_number())
+                z = data["z"].get<long long>();
+            else if (!z_of_name(path, z))
+                return out;
+            if (z < z_min || z > z_max || !data.contains("sheets"))
+                return out;
+            const int shift = correction_of(survey, static_cast<int>(z));
+            for (const json &sheet : data["sheets"])
             {
-                fn(pending.begin()->first, pending.begin()->second);
-                pending.erase(pending.begin());
+                if (sheet.at("winding_label").get<int>() - shift != layer)
+                    continue;
+                Trace t;
+                t.z = static_cast<int>(z);
+                t.winding = layer;
+                t.pull = sheet.value("pull", 0.f);
+                t.xy = sheet.at("xy").get<std::vector<float>>();
+                if (t.size() >= 2)
+                    out.push_back(std::move(t));
             }
-        };
-        for (size_t start = 0; start < order.size(); start += batch)
-        {
-            const size_t stop = std::min(order.size(), start + batch);
-            std::vector<std::vector<Point>> kept(stop - start);
-            parallel_for(static_cast<int>(stop - start), workers, [&](int i, int)
-                         {
-            for (Point& p : read_file(files[order[start + i].second], z_min, z_max)) {
-                const auto c = survey.correction.find(p.z);
-                const int shift = c == survey.correction.end() ? 0 : c->second;
-                if (p.winding - shift != layer) continue;
-                if (!wanted.empty() && !wanted.count(p.track)) continue;
-                p.winding -= shift;
-                kept[i].push_back(p);
-            } });
-            for (auto &part : kept)
-                for (Point &p : part)
-                    pending[p.z].push_back(p);
-            // the next files start at their own z: everything before it is complete
-            flush(stop < order.size() ? order[stop].first : LLONG_MAX);
+            return out;
         }
-        flush(LLONG_MAX);
+
+        // Reads the files a batch at a time (read(path) gives the items of one file, each with its z) and calls
+        // fn(z, items) for every slice, in Z order (name order for the files whose name does not tell their z).
+        template <class Item, class Read>
+        void stream_slices(const std::vector<std::string> &files, int threads, const Read &read,
+                           const std::function<void(int, const std::vector<Item> &)> &fn)
+        {
+            std::vector<std::pair<long long, size_t>> order;
+            for (size_t r = 0; r < files.size(); ++r)
+            {
+                long long z = 0;
+                order.emplace_back(z_of_name(files[r], z) ? z : LLONG_MAX, r);
+            }
+            std::stable_sort(order.begin(), order.end(), [](const auto &a, const auto &b)
+                             { return a.first < b.first; });
+            const int workers = threads > 0 ? threads : hardware_threads();
+            const size_t batch = static_cast<size_t>(std::max(1, 2 * workers));
+            std::map<int, std::vector<Item>> pending; // slices not given yet (a batch may end in the middle of one)
+            auto flush = [&](long long below) {       // gives the slices whose z is below `below`
+                while (!pending.empty() && pending.begin()->first < below)
+                {
+                    fn(pending.begin()->first, pending.begin()->second);
+                    pending.erase(pending.begin());
+                }
+            };
+            for (size_t start = 0; start < order.size(); start += batch)
+            {
+                const size_t stop = std::min(order.size(), start + batch);
+                std::vector<std::vector<Item>> kept(stop - start);
+                parallel_for(static_cast<int>(stop - start), workers, [&](int i, int)
+                             { kept[i] = read(files[order[start + i].second]); });
+                for (auto &part : kept)
+                    for (Item &item : part)
+                        pending[item.z].push_back(std::move(item));
+                // the next files start at their own z: everything before it is complete
+                flush(stop < order.size() ? order[stop].first : LLONG_MAX);
+            }
+            flush(LLONG_MAX);
+        }
+    } // namespace
+
+    void for_each_layer_traces(const std::string &results_dir, int z_min, int z_max, int threads,
+                               const LayerSurvey &survey, int layer,
+                               const std::function<void(int, const std::vector<Trace> &)> &fn)
+    {
+        auto read = [&](const std::string &path)
+        { return read_traces(path, z_min, z_max, survey, layer); };
+        stream_slices<Trace>(files_in_range(results_dir, z_min, z_max), threads, read, fn);
     }
 
 } // namespace pw

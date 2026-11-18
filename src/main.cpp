@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Anthony Charretier
 #include "parallel.hpp"
+#include "scroll_settings.hpp"
 #include "windings.hpp"
 #include "zarr_reader.hpp"
 
@@ -33,6 +34,7 @@ namespace
     {
         pw::Params params;
         std::string scroll_url;
+        std::string ct; // CT volume of the same scroll, recorded for the next tools
         long long z_start = 0;
         long long z_count = 25000;
         long long every = 1;
@@ -52,7 +54,10 @@ namespace
     void usage()
     {
         std::cout << "Winding labels from several peaks, made consistent by one network.\n\n"
-                     "  --scroll-url URL      zarr store: local directory, http(s):// or s3:// (anonymous)\n"
+                     "  --scroll-url URL      zarr store: local directory, http(s):// or s3:// (anonymous); default: the\n"
+                     "                        surface volume recorded in <output dir>/scroll_settings.json\n"
+                     "  --ct URL              the CT volume of the same scroll, at the same resolution: recorded in\n"
+                     "                        scroll_settings.json for unroll_layer and overlay_sections\n"
                      "  --z-start N           first slice (default 8000)\n"
                      "  --z-count N           number of slices (default 9000)\n"
                      "  --every N             process one slice in N (default 1)\n"
@@ -73,7 +78,7 @@ namespace
                      "  --delamination F      synthetic test: width of the delamination in px (default 25)\n"
                      "  --threads N           worker threads (default 0: all)\n"
                      "  --centre-jobs N       candidate centres tried at the same time (default 4)\n"
-                     "  --connections N       parallel http downloads (default 32)\n"
+                     "  --connections N       parallel http downloads, or file reads of a local store (default 32)\n"
                      "  --cache-gb F          a chunk plane is kept decoded in memory up to this size (default 2)\n"
                      "  --timings             print the time of every step\n";
     }
@@ -84,6 +89,8 @@ namespace
         std::map<std::string, std::function<void(const std::string &)>> with_value = {
             {"--scroll-url", [&](const std::string &v)
              { o.scroll_url = v; }},
+            {"--ct", [&](const std::string &v)
+             { o.ct = v; }},
             {"--z-start", [&](const std::string &v)
              { o.z_start = std::stoll(v); }},
             {"--z-count", [&](const std::string &v)
@@ -361,13 +368,35 @@ namespace
     }
 
     // ------------------------------------------------------------------------------------------- a zarr volume
+    // The surface volume read (and the CT volume, when given) recorded next to the results. Results already made from
+    // a volume of another shape are in other voxels: they are not mixed.
+    void record_volumes(pw::ScrollSettings &settings, const Options &o, const std::string &store,
+                        const pw::ZarrVolume &volume)
+    {
+        const std::vector<int64_t> shape(volume.shape().begin(), volume.shape().end());
+        if (!settings.surface.shape.empty() && settings.surface.shape != shape)
+            throw std::runtime_error("the results in " + o.output_dir + " were made from a volume of shape " +
+                                     pw::shape_text(settings.surface.shape) + ", this one is " +
+                                     pw::shape_text(shape) + ": give another --scroll-name (or --output-dir)");
+        settings.surface = {store, shape};
+        if (!o.ct.empty())
+            settings.ct = {o.ct, {}};
+        settings.save();
+        std::printf("--> volumes recorded in %s\n", settings.file().c_str());
+    }
+
     void run_volume(const Options &o)
     {
         std::filesystem::create_directories(o.output_dir);
-        std::printf("--> zarr store: %s\n", o.scroll_url.c_str());
+        pw::ScrollSettings settings = pw::ScrollSettings::load(o.output_dir);
+        const std::string store = !o.scroll_url.empty() ? o.scroll_url : settings.surface.store;
+        if (store.empty())
+            throw std::invalid_argument("--scroll-url is required: no surface volume is recorded in " + settings.file());
+        std::printf("--> zarr store: %s\n", store.c_str());
         std::fflush(stdout);
-        const std::unique_ptr<pw::ZarrVolume> volume = pw::ZarrVolume::open(o.scroll_url, o.connections, o.params.threads, o.cache_gb);
+        const std::unique_ptr<pw::ZarrVolume> volume = pw::ZarrVolume::open(store, o.connections, o.params.threads, o.cache_gb);
         std::printf("--> %s\n", volume->description().c_str());
+        record_volumes(settings, o, store, *volume);
         std::fflush(stdout);
 
         bool has_previous = false;

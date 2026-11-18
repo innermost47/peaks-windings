@@ -3,7 +3,6 @@
   "version-string": "1.0.0",
   "dependencies": [
     { "name": "opencv4", "default-features": false, "features": ["png", "tiff", "jpeg"] },
-    "eigen3",
     "curl",
     "blosc",
     "zstd",

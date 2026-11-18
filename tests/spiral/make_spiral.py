@@ -30,6 +30,47 @@ for s in range(5):
     for b in range(Z // 20 + 1):
         holes[(s, b)] = [(rng.uniform(0, 360), rng.uniform(10, 25)) for _ in range(3)]
 t = np.arange(0, 1500, 1.0)
+
+
+def sheet_point(z, m, th):
+    """The point of the sheet u = m (label m + 1) at angle th (radians, 0 .. 2 pi) in slice z."""
+    r = R0 + PITCH * (m + th / (2 * math.pi))
+    return cx(z) + r * math.cos(th), cy(z) + r * math.sin(th)
+
+
+def traces(z):
+    """The sheets as peaks_windings traces them: every turn cut into stretches by breaks and junctions that move
+    from slice to slice, points every 3 px, plus a few wrong traces half a turn off (most of them pulled hard)."""
+    out = []
+    for m in range(0, 46):
+        r_mid = R0 + PITCH * (m + 0.5)
+        n = max(int(2 * math.pi * r_mid / 3), 8)
+        ths = np.linspace(0, 2 * math.pi, n, endpoint=False)
+        cut, i = [], 0
+        while i < n:
+            length = int(rng.uniform(100, 600) / 3)
+            gap = int(rng.uniform(5, 40) / 3)
+            cut.append((i, min(i + length, n)))
+            i += length + gap
+        for a, b in cut:
+            if b - a < 3:
+                continue
+            xy = []
+            for th in ths[a:b]:
+                x, y = sheet_point(z, m, th)
+                xy += [int(round(x + rng.normal(0, 0.4))), int(round(y + rng.normal(0, 0.4)))]
+            out.append({"winding_label": m + 1, "pull": round(abs(rng.normal(0, 0.5)), 2), "xy": xy})
+    for k in range(2):
+        m = int(rng.integers(5, 40))
+        th0 = rng.uniform(0, 2 * math.pi - 1)
+        xy = []
+        for th in np.linspace(th0, th0 + 0.5, 40):
+            x, y = sheet_point(z, m + 0.5, th)
+            xy += [int(round(x)), int(round(y))]
+        out.append({"winding_label": m + 1, "pull": 6.0 if k == 0 else 0.5, "xy": xy})
+    return out
+
+
 for z in range(Z):
     lines, peaks = [], []
     centre_summit = (z // 50) % 5  # the centre jumps from summit to summit
@@ -97,6 +138,7 @@ for z in range(Z):
                 "centre": centre,
                 "peaks": peaks,
                 "lines": lines,
+                "sheets": traces(z),
             },
             f,
         )

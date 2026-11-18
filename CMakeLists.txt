@@ -14,7 +14,6 @@ endif()
 option(PW_NATIVE "Tune the build for this machine (-march=native); the binary may not run elsewhere" OFF)
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
-find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Threads REQUIRED)
@@ -59,11 +58,11 @@ find_package(ZLIB QUIET)
 add_library(pw_common STATIC
   src/zarr_reader.cpp
   src/layers.cpp
+  src/scroll_settings.cpp
 )
 target_include_directories(pw_common PUBLIC ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(pw_common PUBLIC
   ${OpenCV_LIBS}
-  Eigen3::Eigen
   nlohmann_json::nlohmann_json
   Threads::Threads
   PRIVATE
@@ -97,9 +96,15 @@ add_executable(peaks_windings
   src/sheet_skeleton.cpp
   src/sheet_pieces.cpp
   src/winding_graph.cpp
-  src/spot_heights.cpp
+  src/sheet_traces.cpp
 )
-add_executable(unroll_layer src/unroll_layer.cpp)           
+add_executable(unroll_layer
+  src/unroll_layer.cpp
+  src/layer_unfolding.cpp
+  src/slab_sampler.cpp
+  src/chunk_mosaic.cpp
+  src/unroll_output.cpp
+)           
 add_executable(export_3d src/export_3d.cpp)   
 add_executable(overlay_sections src/overlay_sections.cpp src/zarr_reader.cpp)           
 

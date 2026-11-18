@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Anthony Charretier
 #pragma once
 #include "peaks.hpp"
+#include "sheet_traces.hpp"
 #include "spot_heights.hpp"
 
 #include <opencv2/core.hpp>
@@ -61,7 +62,8 @@ namespace pw
         int n_rays = 0;
         std::vector<Peak> peaks;
         std::vector<double> scores;
-        SpotHeights spots; // every solved sheet point, for the next slice
+        std::vector<SheetTrace> sheets; // the solved sheets, traced along their centre lines
+        SpotHeights spots;              // every solved sheet point, for the next slice
         Timings timings;
     };
 
