@@ -85,9 +85,10 @@ endif()
 
 add_executable(peaks_windings src/main.cpp src/windings.cpp)   
 add_executable(unroll_layer src/unroll_layer.cpp)           
-add_executable(export_3d src/export_3d.cpp)              
+add_executable(export_3d src/export_3d.cpp)   
+add_executable(overlay_sections src/overlay_sections.cpp src/zarr_reader.cpp)           
 
-set(PW_TARGETS pw_common peaks_windings unroll_layer export_3d)
+set(PW_TARGETS pw_common peaks_windings unroll_layer export_3d overlay_sections)
 foreach(target IN LISTS PW_TARGETS)
   if(NOT target STREQUAL "pw_common")
     target_link_libraries(${target} PRIVATE pw_common)
