@@ -414,14 +414,15 @@ namespace
 
     struct Options
     {
-        std::string results_dir = "results";
+        std::string scroll_name = "scroll"; // folders: results/{json,png,csv}/<scroll name>/
+        std::string results_dir;            // empty: results/json/<scroll name>
         bool has_layer = false;
         int layer = 0;
         std::string scroll;
         bool all = true; // all the summits together (false: one image per summit)
         int slab = 6;
         int step_z = 1;
-        std::string output = "results/png";
+        std::string output; // empty: results/png/<scroll name>/layer_<N>/unrolled_layer_<N>_<all|clean>.png
         int threads = 0;
         int connections = 32;
         double block_mb = 256;
@@ -1048,14 +1049,18 @@ namespace
     void usage()
     {
         std::cout << "Unroll one winding layer of a scanned scroll into a flat image (slab MIP).\n\n"
-                     "  --results-dir DIR   folder containing the JSON results (default: results)\n"
+                     "  --scroll-name NAME  name of the scroll, the same as given to peaks_windings (default: scroll);\n"
+                     "                      results are read from results/json/NAME/ and written to\n"
+                     "                      results/png/NAME/layer_<N>/ and results/csv/NAME/layer_<N>/\n"
+                     "  --results-dir DIR   folder containing the JSON results (default: results/json/NAME)\n"
                      "  --layer N           winding layer to unroll (default: the one with the most points)\n"
                      "  --scroll URL        CT volume to sample: path or URL of a zarr store (required)\n"
                      "  --summits all|each  all the summits together, one image of the layer around the centre (default),\n"
                      "                      or one image per summit (the former unrolling)\n"
                      "  --slab N            slab thickness in voxels for the MIP (default: 6)\n"
                      "  --step-z N          vertical step in voxels (default: 1)\n"
-                     "  --output FILE       output image (default: results/png/unrolled_layer_<layer>_clean.png);\n"
+                     "  --output FILE       output image (default: results/png/NAME/layer_<N>/unrolled_layer_<N>_all.png,\n"
+                     "                      or ..._clean.png with --summits each);\n"
                      "                      _track<N> is added to the name for every summit\n"
                      "  --tracks N          each: the N summits with the most points of the layer (default: 5)\n"
                      "  --track N           each: one given summit only\n"
@@ -1107,7 +1112,9 @@ int main(int argc, char **argv)
                     throw std::invalid_argument("option " + arg + " needs a value");
                 value = argv[++i];
             }
-            if (arg == "--results-dir")
+            if (arg == "--scroll-name")
+                o.scroll_name = value;
+            else if (arg == "--results-dir")
                 o.results_dir = value;
             else if (arg == "--layer")
                 o.layer = std::stoi(value), o.has_layer = true;
@@ -1175,6 +1182,10 @@ int main(int argc, char **argv)
             throw std::invalid_argument(
                 "--scroll must be the path or URL of the zarr CT volume (scroll numbers are resolved by the Python "
                 "vesuvius package, which this program does not use)");
+        if (o.scroll_name.empty())
+            throw std::invalid_argument("--scroll-name cannot be empty");
+        if (o.results_dir.empty())
+            o.results_dir = (std::filesystem::path("results") / "json" / o.scroll_name).string();
 
         // 1. The layer, and the summits that see it
         // Two passes over the files, so that a whole scroll fits in memory: the first aligns the labels and counts
@@ -1182,10 +1193,13 @@ int main(int argc, char **argv)
         const pw::LayerSurvey survey = pw::survey_layers(o.results_dir, o.z_min, o.z_max, o.threads);
         const int n_rays = pw::ray_count(o.results_dir);
         const int layer = choose_layer(survey, o.has_layer, o.layer);
+        // every output of this layer goes to its own folders: results/png/<scroll>/layer_<N>/, results/csv/<scroll>/layer_<N>/
+        const std::string layer_folder = "layer_" + std::to_string(layer);
+        const std::filesystem::path png_dir = std::filesystem::path("results") / "png" / o.scroll_name / layer_folder;
+        const std::filesystem::path csv_dir = std::filesystem::path("results") / "csv" / o.scroll_name / layer_folder;
         const std::filesystem::path base =
             !o.output.empty() ? std::filesystem::path(o.output)
-                              : std::filesystem::path(o.results_dir) /
-                                    ("unrolled_layer_" + std::to_string(layer) + "_clean.png");
+                              : png_dir / ("unrolled_layer_" + std::to_string(layer) + "_clean.png");
 
         if (o.all)
         {
@@ -1198,13 +1212,25 @@ int main(int argc, char **argv)
                 std::printf("--> Layer %d has no point\n", layer);
                 return 0;
             }
+            {
+                // the smoothed centre of every slice, to check whether the scroll axis is tilted
+                std::filesystem::create_directories(csv_dir);
+                const std::filesystem::path csv_path = csv_dir / "centres.csv";
+                std::ofstream csv(csv_path);
+                if (!csv)
+                    throw std::runtime_error("cannot write " + csv_path.string());
+                csv << "z,cx,cy\n";
+                for (int i = 0; i < static_cast<int>(ring->cx.size()); ++i)
+                    csv << ring->z_first + i << "," << ring->cx[i] << "," << ring->cy[i] << "\n";
+                std::printf("--> Centres written to: '%s'\n", csv_path.string().c_str());
+            }
             const std::unique_ptr<pw::ZarrVolume> volume = pw::ZarrVolume::open(o.scroll, o.connections, o.threads);
             std::printf("--> %s\n", volume->description().c_str());
             Unrolling u;
             rails_of_ring(ring, o, u);
             u.title = "Unrolled layer " + std::to_string(layer) + " from all summits (slab MIP)";
             const std::string out_png =
-                o.output.empty() ? (base.parent_path() / ("unrolled_layer_" + std::to_string(layer) + "_all.png")).string()
+                o.output.empty() ? (png_dir / ("unrolled_layer_" + std::to_string(layer) + "_all.png")).string()
                                  : base.string();
             sample_and_save(u, o, volume.get(), out_png);
             return 0;

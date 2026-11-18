@@ -37,7 +37,7 @@ namespace
         long long z_count = 25000;
         long long every = 1;
         std::string solver = "lsq";
-        std::string output_dir = "results/json";
+        std::string output_dir; // empty: results/json/<scroll name>
         std::string scroll_name = "scroll";
         std::string image;
         bool synthetic = false;
@@ -67,8 +67,8 @@ namespace
                      "  --sectors N           angular sectors of a fragment around the centre (default 36)\n"
                      "  --frame-px F          full-res px: thicker than this is the frame (default 30)\n"
                      "  --close-px F          full-res px: gaps closed to find the interior (default 70)\n"
-                     "  --output-dir DIR      (default results/json/)\n"
-                     "  --scroll-name NAME    (default scroll)\n"
+                     "  --output-dir DIR      (default results/json/<scroll name>/)\n"
+                     "  --scroll-name NAME    name of the scroll, used in the file names and folders (default scroll)\n"
                      "  --image FILE          process one image file instead of a zarr store\n"
                      "  --synthetic           test on a synthetic spiral, checked against truth\n"
                      "  --delamination F      synthetic test: width of the delamination in px (default 25)\n"
@@ -183,6 +183,10 @@ namespace
             throw std::invalid_argument("--sectors must be at least 1");
         if (o.params.scale <= 0)
             throw std::invalid_argument("--scale must be positive");
+        if (o.scroll_name.empty())
+            throw std::invalid_argument("--scroll-name cannot be empty");
+        if (o.output_dir.empty())
+            o.output_dir = (std::filesystem::path("results") / "json" / o.scroll_name).string();
         return o;
     }
 
