@@ -5,5 +5,6 @@ vcpkg_installed
 main.bat
 scrolls.cfg
 NOTES.md
+ALGORITHMES.md
 __pycache__
 CLAUDE.md
