@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <map>
@@ -141,7 +140,7 @@ namespace
 
         make_parent(path);
         TextFile out(path);
-        std::fprintf(out.get(), "# Sheet surfaces, one mesh per winding layer (gws-vesuvius)\n\n");
+        std::fprintf(out.get(), "# Sheet surfaces, one mesh per winding layer (peaks_windings)\n\n");
         for (size_t i : vertices)
             std::fprintf(out.get(), "v %.2f %.2f %.2f\n", points[i].x, points[i].y, static_cast<double>(points[i].z));
         std::fprintf(out.get(), "\n");
@@ -155,9 +154,8 @@ namespace
     void usage()
     {
         std::cout << "Convert scan results into a 3D OBJ mesh and a PLY point cloud.\n\n"
-                     "  --results-dir DIR   directory containing the JSON files (default: results)\n"
-                     "  --obj-out FILE      output OBJ mesh (default: results/obj/scroll.obj)\n"
-                     "  --ply-out FILE      output PLY point cloud (default: results/ply/pointcloud.ply)\n"
+                     "  --scroll-name NAME  name of the scroll, used in the file names and folders (default scroll)\n"
+                     "  --results-dir DIR   folder containing the JSON results (default: results/json/NAME)\n"
                      "  --min-points N      minimum number of points of a layer seen from a summit to mesh it (default: 60)\n"
                      "  --track N           keep only the rays of this summit (default: all)\n"
                      "  --z-min N           first slice kept (default: all)\n"
@@ -171,9 +169,9 @@ int main(int argc, char **argv)
 {
     try
     {
-        std::string results_dir = "results";
-        std::string obj_out = "results/obj/scroll.obj";
-        std::string ply_out = "results/ply/pointcloud.ply";
+        std::string results_dir;
+        std::string output_dir = "results/3D";
+        std::string scroll_name = "scroll";
         long min_points = 60;
         int z_min = INT_MIN, z_max = INT_MAX, threads = 0;
         bool has_track = false;
@@ -201,10 +199,8 @@ int main(int argc, char **argv)
             }
             if (arg == "--results-dir")
                 results_dir = value;
-            else if (arg == "--obj-out")
-                obj_out = value;
-            else if (arg == "--ply-out")
-                ply_out = value;
+            else if (arg == "--scroll-name")
+                scroll_name = value;
             else if (arg == "--min-points")
                 min_points = std::stol(value);
             else if (arg == "--z-min")
@@ -218,6 +214,11 @@ int main(int argc, char **argv)
             else
                 throw std::invalid_argument("unknown option " + arg + " (see --help)");
         }
+        // Paths that depend on the scroll name are built once every option is known
+        if (results_dir.empty())
+            results_dir = "results/json/" + scroll_name;
+        const std::string obj_out = output_dir + "/obj/scroll_" + scroll_name + ".obj";
+        const std::string ply_out = output_dir + "/ply/" + scroll_name + "_pointcloud.ply";
 
         // 1. Load results, labels aligned along Z
         std::vector<Point> points = pw::load_points(results_dir, z_min, z_max, threads);

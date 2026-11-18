@@ -1180,8 +1180,7 @@ int main(int argc, char **argv)
         const bool is_number = !o.scroll.empty() && o.scroll.find_first_not_of("0123456789") == std::string::npos;
         if (o.scroll.empty() || is_number)
             throw std::invalid_argument(
-                "--scroll must be the path or URL of the zarr CT volume (scroll numbers are resolved by the Python "
-                "vesuvius package, which this program does not use)");
+                "--scroll must be the path or URL of the zarr CT volume, not a number");
         if (o.scroll_name.empty())
             throw std::invalid_argument("--scroll-name cannot be empty");
         if (o.results_dir.empty())

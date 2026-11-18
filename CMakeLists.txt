@@ -83,7 +83,22 @@ else()
   message(STATUS "zlib not found: stores compressed with zlib / gzip will not be readable")
 endif()
 
-add_executable(peaks_windings src/main.cpp src/windings.cpp)   
+add_executable(peaks_windings
+  src/main.cpp
+  src/windings.cpp
+  src/normalise.cpp
+  src/slice_json.cpp
+  src/scroll_mask.cpp
+  src/peaks.cpp
+  src/summits.cpp
+  src/sheet_directions.cpp
+  src/ray_crossings.cpp
+  src/thinning.cpp
+  src/sheet_skeleton.cpp
+  src/sheet_pieces.cpp
+  src/winding_graph.cpp
+  src/spot_heights.cpp
+)
 add_executable(unroll_layer src/unroll_layer.cpp)           
 add_executable(export_3d src/export_3d.cpp)   
 add_executable(overlay_sections src/overlay_sections.cpp src/zarr_reader.cpp)           

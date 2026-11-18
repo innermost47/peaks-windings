@@ -37,7 +37,7 @@ namespace
         long long z_count = 25000;
         long long every = 1;
         std::string solver = "lsq";
-        std::string output_dir; // empty: results/json/<scroll name>
+        std::string output_dir;
         std::string scroll_name = "scroll";
         std::string image;
         bool synthetic = false;
@@ -64,7 +64,6 @@ namespace
                      "  --max-radius F        0: the size of the slice (default 0)\n"
                      "  --min-spire N         px of spire for a crossing (default 2)\n"
                      "  --min-gap N           px of void before a new crossing (default 3)\n"
-                     "  --sectors N           angular sectors of a fragment around the centre (default 36)\n"
                      "  --frame-px F          full-res px: thicker than this is the frame (default 30)\n"
                      "  --close-px F          full-res px: gaps closed to find the interior (default 70)\n"
                      "  --output-dir DIR      (default results/json/<scroll name>/)\n"
@@ -73,7 +72,7 @@ namespace
                      "  --synthetic           test on a synthetic spiral, checked against truth\n"
                      "  --delamination F      synthetic test: width of the delamination in px (default 25)\n"
                      "  --threads N           worker threads (default 0: all)\n"
-                     "  --centre-jobs N       candidate centres tried at the same time (default 4; each holds a label map)\n"
+                     "  --centre-jobs N       candidate centres tried at the same time (default 4)\n"
                      "  --connections N       parallel http downloads (default 32)\n"
                      "  --cache-gb F          a chunk plane is kept decoded in memory up to this size (default 2)\n"
                      "  --timings             print the time of every step\n";
@@ -107,8 +106,6 @@ namespace
              { o.params.min_spire = std::stoi(v); }},
             {"--min-gap", [&](const std::string &v)
              { o.params.min_gap = std::stoi(v); }},
-            {"--sectors", [&](const std::string &v)
-             { o.params.sectors = std::stoi(v); }},
             {"--frame-px", [&](const std::string &v)
              { o.params.frame_px = std::stod(v); o.frame_px_given = true; }},
             {"--close-px", [&](const std::string &v)
@@ -179,8 +176,6 @@ namespace
         }
         if (o.every < 1)
             throw std::invalid_argument("--every must be at least 1");
-        if (o.params.sectors < 1)
-            throw std::invalid_argument("--sectors must be at least 1");
         if (o.params.scale <= 0)
             throw std::invalid_argument("--scale must be positive");
         if (o.scroll_name.empty())
@@ -201,8 +196,8 @@ namespace
 
     void print_timings(const pw::Timings &t)
     {
-        std::printf("    mask %.2f s, spires %.2f s, peaks %.2f s, rays %.2f s, centre %.2f s, output %.2f s\n", t.mask,
-                    t.spires, t.peaks, t.rays, t.centre, t.output);
+        std::printf("    mask %.2f s, peaks %.2f s, rays %.2f s, skeleton %.2f s, centre %.2f s, output %.2f s\n", t.mask,
+                    t.peaks, t.rays, t.skeleton, t.centre, t.output);
     }
 
     void write_file(const std::string &path, const std::string &text)
@@ -378,6 +373,7 @@ namespace
         bool has_previous = false;
         cv::Point2d previous;
         pw::TrackState tracks; // the summits followed from slice to slice
+        pw::SpotHeights spots;  // the solved sheet points of the previous slice
         const auto t_all = Clock::now();
         const long long z_end = std::min<long long>(o.z_start + o.z_count, volume->shape()[0]);
         if (o.z_start + o.z_count > volume->shape()[0])
@@ -389,9 +385,10 @@ namespace
             const cv::Mat img = pw::normalise(volume->read_slice(z));
             const double t_read = seconds_since(t0);
             t0 = Clock::now();
-            const pw::SliceResult info = pw::process_slice(img, o.params, has_previous ? &previous : nullptr, &tracks);
+            pw::SliceResult info = pw::process_slice(img, o.params, has_previous ? &previous : nullptr, &tracks, &spots);
             has_previous = info.has_centre;
             previous = cv::Point2d(info.cx, info.cy);
+            spots = std::move(info.spots);
             size_t n = 0;
             for (const pw::LineOut &line : info.lines)
                 n += line.crossings.size();
