@@ -6,7 +6,9 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -17,7 +19,6 @@ namespace pw
 {
     namespace
     {
-        // numpy.percentile (linear interpolation) of an unsorted array, which is reordered.
         double percentile(std::vector<double> &v, double q)
         {
             const double pos = (v.size() - 1) * q / 100.0;
@@ -29,15 +30,61 @@ namespace pw
             return t >= 0.5 ? b - (b - a) * (1.0 - t) : a + (b - a) * t;
         }
 
-        // A float32 array of shape (rows, cols, 3) as a NumPy .npy file.
-        void save_npy(const std::string &path, const cv::Mat &data)
+        inline void write_u16(std::ostream &os, uint16_t v)
         {
-            CV_Assert(data.type() == CV_32FC3 && data.isContinuous());
-            std::string header = "{'descr': '<f4', 'fortran_order': False, 'shape': (" + std::to_string(data.rows) + ", " +
-                                 std::to_string(data.cols) + ", 3), }";
+            const unsigned char buf[2] = {static_cast<unsigned char>(v & 0xff), static_cast<unsigned char>((v >> 8) & 0xff)};
+            os.write(reinterpret_cast<const char *>(buf), 2);
+        }
+
+        inline void write_u32(std::ostream &os, uint32_t v)
+        {
+            const unsigned char buf[4] = {static_cast<unsigned char>(v & 0xff),
+                                          static_cast<unsigned char>((v >> 8) & 0xff),
+                                          static_cast<unsigned char>((v >> 16) & 0xff),
+                                          static_cast<unsigned char>((v >> 24) & 0xff)};
+            os.write(reinterpret_cast<const char *>(buf), 4);
+        }
+
+        uint32_t crc32_update(uint32_t crc, const unsigned char *buf, size_t len)
+        {
+            static const auto table = []()
+            {
+                std::array<uint32_t, 256> t{};
+                for (uint32_t i = 0; i < 256; ++i)
+                {
+                    uint32_t c = i;
+                    for (int j = 0; j < 8; ++j)
+                        c = (c & 1) ? (0xEDB88320 ^ (c >> 1)) : (c >> 1);
+                    t[i] = c;
+                }
+                return t;
+            }();
+            for (size_t i = 0; i < len; ++i)
+                crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >> 8);
+            return crc;
+        }
+
+        std::string make_npy_header(const cv::Mat &data)
+        {
+            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
+
+            std::string shape_str;
+            if (data.channels() == 1)
+                shape_str = "(" + std::to_string(data.rows) + ", " + std::to_string(data.cols) + "), }";
+            else
+                shape_str = "(" + std::to_string(data.rows) + ", " + std::to_string(data.cols) + ", " + std::to_string(data.channels()) + "), }";
+
+            std::string header = "{'descr': '<f4', 'fortran_order': False, 'shape': " + shape_str;
             while ((10 + header.size() + 1) % 64 != 0)
                 header += ' ';
             header += '\n';
+            return header;
+        }
+
+        void save_npy(const std::string &path, const cv::Mat &data)
+        {
+            CV_Assert(data.type() == CV_32FC3 && data.isContinuous());
+            const std::string header = make_npy_header(data);
             std::ofstream f(path, std::ios::binary);
             const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
                                              static_cast<unsigned char>(header.size() & 0xff),
@@ -49,7 +96,89 @@ namespace pw
                 throw std::runtime_error("cannot write " + path);
         }
 
-        // A "nice" tick step (1, 2 or 5 times a power of ten) giving about `target` ticks over `span`.
+        void save_npz(const std::string &path, const std::string &entry_name, const cv::Mat &data)
+        {
+            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
+
+            const std::string filename_in_zip = (entry_name.size() >= 4 && entry_name.rfind(".npy") == entry_name.size() - 4)
+                                                    ? entry_name
+                                                    : entry_name + ".npy";
+            const std::string header = make_npy_header(data);
+
+            const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
+                                             static_cast<unsigned char>(header.size() & 0xff),
+                                             static_cast<unsigned char>(header.size() >> 8)};
+
+            const size_t raw_data_size = data.total() * data.elemSize();
+            const size_t npy_size = 10 + header.size() + raw_data_size;
+
+            if (npy_size >= 0xFFFFFFFFULL)
+                throw std::runtime_error("Array exceeds 4 GB limit of standard 32-bit ZIP");
+
+            uint32_t crc = 0xFFFFFFFF;
+            crc = crc32_update(crc, magic, 10);
+            crc = crc32_update(crc, reinterpret_cast<const unsigned char *>(header.data()), header.size());
+            crc = crc32_update(crc, reinterpret_cast<const unsigned char *>(data.data), raw_data_size);
+            crc = ~crc;
+
+            std::ofstream f(path, std::ios::binary);
+            if (!f)
+                throw std::runtime_error("cannot open for writing: " + path);
+
+            const uint32_t u_npy_size = static_cast<uint32_t>(npy_size);
+            const uint16_t fname_len = static_cast<uint16_t>(filename_in_zip.size());
+
+            write_u32(f, 0x04034b50);
+            write_u16(f, 20);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u32(f, crc);
+            write_u32(f, u_npy_size);
+            write_u32(f, u_npy_size);
+            write_u16(f, fname_len);
+            write_u16(f, 0);
+            f.write(filename_in_zip.data(), fname_len);
+
+            f.write(reinterpret_cast<const char *>(magic), 10);
+            f.write(header.data(), static_cast<std::streamsize>(header.size()));
+            f.write(reinterpret_cast<const char *>(data.data), static_cast<std::streamsize>(raw_data_size));
+
+            const uint32_t cd_offset = 30 + fname_len + u_npy_size;
+
+            write_u32(f, 0x02014b50);
+            write_u16(f, 20);
+            write_u16(f, 20);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u32(f, crc);
+            write_u32(f, u_npy_size);
+            write_u32(f, u_npy_size);
+            write_u16(f, fname_len);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u32(f, 0);
+            write_u32(f, 0);
+            f.write(filename_in_zip.data(), fname_len);
+
+            write_u32(f, 0x06054b50);
+            write_u16(f, 0);
+            write_u16(f, 0);
+            write_u16(f, 1);
+            write_u16(f, 1);
+            write_u32(f, 46 + fname_len);
+            write_u32(f, cd_offset);
+            write_u16(f, 0);
+
+            if (!f)
+                throw std::runtime_error("cannot write " + path);
+        }
+
         double tick_step(double span, int target)
         {
             const double raw = std::max(span, 1e-9) / target;
@@ -60,7 +189,6 @@ namespace pw
             return 10.0 * power;
         }
 
-        // The image with a title and graduated axes (position along the sheet, slice Z).
         void save_figure(const std::string &path, const cv::Mat &gray, const std::string &title, int z_start, int z_end,
                          const std::string &x_label, double x_max)
         {
@@ -102,7 +230,7 @@ namespace pw
                 cv::putText(canvas, text, cv::Point(plot.x - 18 - size.width, y + size.height / 2), font, 0.8, black, 1,
                             cv::LINE_AA);
             }
-            { // the vertical axis label, written flat then turned
+            {
                 const std::string text = "Slice Z (native voxels)";
                 int base = 0;
                 const cv::Size size = cv::getTextSize(text, font, 0.9, 2, &base);
@@ -134,7 +262,6 @@ namespace pw
     {
         cv::Mat image = im.values.clone();
         const cv::Mat &coords = im.coords;
-        // contrast: the 3 % .. 97 % range of the sampled values, the unsampled pixels staying black
         std::vector<double> seen;
         for (int r = 0; r < image.rows; ++r)
         {
@@ -154,7 +281,6 @@ namespace pw
                         row[c] = row[c] > 0 ? std::min(std::max((row[c] - p3) / (p97 - p3), 0.0), 1.0) : 0.0;
                 }
         }
-        // 8-bit grey as matplotlib's "gray" colormap gives it
         unsigned char lut[256];
         for (int i = 0; i < 256; ++i)
             lut[i] = static_cast<unsigned char>((i == 255 ? 1.0 : i * (1.0 / 255.0)) * 255.0);
@@ -174,13 +300,23 @@ namespace pw
             (out_path.parent_path() / (out_path.stem().string() + "_full.png")).string();
         if (!cv::imwrite(full_png, gray))
             throw std::runtime_error("cannot write " + full_png);
+
         const std::string coords_npy = (out_path.parent_path() / (out_path.stem().string() + "_coords.npy")).string();
         save_npy(coords_npy, coords);
+
+        const std::string coords_npz = (out_path.parent_path() / (out_path.stem().string() + "_coords.npz")).string();
+        save_npz(coords_npz, "coords", coords);
+
+        cv::Mat values_f32;
+        im.values.convertTo(values_f32, CV_32FC1);
+        const std::string values_npz = (out_path.parent_path() / (out_path.stem().string() + "_values.npz")).string();
+        save_npz(values_npz, "values", values_f32);
+
         char range[64];
         const int z_start = im.z_start, z_end = im.z_end;
         std::snprintf(range, sizeof(range), " | Z = [%d -> %d]", z_start, z_end);
         save_figure(output_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
-        std::printf("--> Image saved to: '%s' (full resolution: '%s', coordinates: '%s')\n", output_png.c_str(),
-                    full_png.c_str(), coords_npy.c_str());
+        std::printf("--> Image saved to: '%s' (full: '%s', npy: '%s', npz: '%s')\n",
+                    output_png.c_str(), full_png.c_str(), coords_npy.c_str(), coords_npz.c_str());
     }
 } // namespace pw
