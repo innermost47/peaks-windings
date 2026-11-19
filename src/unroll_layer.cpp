@@ -38,6 +38,7 @@ namespace
         int connections = 32;
         int z_min = INT_MIN, z_max = INT_MAX;
         int max_width = 1600; // widest image along the sheet (px)
+        bool diagnose_only = false; // follow the sheet and report, without reading the CT volume
         pw::SlabParams slab;
         pw::LayerUnfolding::Params unfolding;
     };
@@ -166,7 +167,11 @@ namespace
                      "  --max-turn F        degrees: ... and turning at most this much (default: 45)\n"
                      "  --fill-px F         voxels: holes along the sheet up to this long are bridged straight\n"
                      "                      (default: 30)\n"
+                     "  --min-region-share F regions smaller than this share of the largest (by area) are left out\n"
+                     "                      (default: 0.02)\n"
                      "  --max-width N       widest image along the sheet in px (default: 1600)\n"
+                     "  --diagnose-only     follow the sheet and print the report (traces left out, regions, coverage),\n"
+                     "                      without reading the CT volume or writing any image\n"
                      "  --cache-mb F        memory budget of the decoded volume chunks held at once, in MB\n"
                      "                      (default: 1024); only the chunks the slab crosses are read\n"
                      "  --z-min N           first slice kept (default: all)\n"
@@ -185,6 +190,11 @@ namespace
             {
                 usage();
                 std::exit(0);
+            }
+            if (arg == "--diagnose-only")
+            {
+                o.diagnose_only = true;
+                continue;
             }
             std::string value;
             const size_t eq = arg.find('=');
@@ -223,6 +233,8 @@ namespace
                 o.unfolding.max_turn_deg = std::stod(value);
             else if (arg == "--fill-px")
                 o.unfolding.fill_px = std::stod(value);
+            else if (arg == "--min-region-share")
+                o.unfolding.min_region_share = std::stod(value);
             else if (arg == "--max-width")
                 o.max_width = std::max(300, std::stoi(value));
             else if (arg == "--cache-mb")
@@ -282,6 +294,22 @@ namespace
         std::vector<double> u(width);
         for (int k = 0; k < width; ++k)
             u[k] = span * k / (width - 1);
+        std::printf("    - Traces offered: %ld; left out: %ld pulled too far (--max-pull), %ld too short, "
+                    "%ld not placed; regions: %ld made, %ld kept\n",
+                    st.offered, st.pulled, st.too_short, st.unplaced, st.regions_total, st.regions_kept);
+        std::printf("    - Coverage: %.1f%% of the columns have a sheet position in an average slice (the rest stays black)\n",
+                    100.0 * unfolding.coverage(u));
+        const double total_area = unfolding.total_area();
+        std::printf("    - Regions kept hold %.1f%% of the trace length placed; the largest ones (u extent, slices, share):\n",
+                    total_area > 0 ? 100.0 * unfolding.kept_area() / total_area : 0.0);
+        for (const pw::LayerUnfolding::RegionSummary &r : unfolding.largest_regions(10))
+            std::printf("        %s width %9.0f voxels, Z %d -> %d, %.1f%% of the length\n", r.kept ? "kept   " : "left out",
+                        r.width, r.z_first, r.z_last, total_area > 0 ? 100.0 * r.area / total_area : 0.0);
+        if (o.diagnose_only)
+        {
+            std::printf("--> Layer %d: diagnosis only, the CT volume is not read\n", layer);
+            return false;
+        }
         std::vector<int> dense_z;
         for (int z = unfolding.z_first(); z <= unfolding.z_last(); z += o.step_z)
             dense_z.push_back(z);
@@ -331,7 +359,7 @@ int main(int argc, char **argv)
         const Options o = parse(argc, argv);
         const auto t0 = Clock::now();
         pw::ScrollSettings settings = pw::ScrollSettings::load(o.results_dir);
-        if (o.scroll.empty() && !settings.ct.known())
+        if (!o.diagnose_only && o.scroll.empty() && !settings.ct.known())
             throw std::invalid_argument("--scroll is required: no CT volume is recorded in " + settings.file() +
                                         " (give it once, here or to peaks_windings --ct)");
 
@@ -351,8 +379,12 @@ int main(int argc, char **argv)
             std::fflush(stdout);
             written += unroll_one(o, survey, layers[i], settings, volume);
         }
-        std::printf("--> %zu of %zu layer(s) unrolled in %.1f s.\n", written, layers.size(), seconds_since(t0));
-        return written > 0 ? 0 : 1;
+        if (o.diagnose_only)
+            std::printf("--> %zu layer(s) diagnosed in %.1f s (diagnosis only: no image written).\n", layers.size(),
+                        seconds_since(t0));
+        else
+            std::printf("--> %zu of %zu layer(s) unrolled in %.1f s.\n", written, layers.size(), seconds_since(t0));
+        return written > 0 || o.diagnose_only ? 0 : 1;
     }
     catch (const std::exception &e)
     {

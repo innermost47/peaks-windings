@@ -245,17 +245,20 @@ namespace pw
     void LayerUnfolding::add_slice(int z, const std::vector<Trace> &traces)
     {
         std::vector<Polyline> candidates;
+        stats_.offered += static_cast<long>(traces.size());
         for (const Trace &t : traces)
         {
             if (params_.max_pull > 0 && t.pull > params_.max_pull)
             {
                 ++stats_.dropped;
+                ++stats_.pulled;
                 continue;
             }
             Polyline line = polyline(t);
             if (line.s.size() < 2 || line.length() < params_.min_trace_px)
             {
                 ++stats_.dropped;
+                ++stats_.too_short;
                 continue;
             }
             candidates.push_back(std::move(line));
@@ -268,7 +271,9 @@ namespace pw
         inherit(candidates, done, placed);
         join(candidates, done, placed);
         seed(candidates, done, placed);
-        stats_.dropped += static_cast<long>(std::count(done.begin(), done.end(), 0));
+        const long left_over = static_cast<long>(std::count(done.begin(), done.end(), 0));
+        stats_.dropped += left_over;
+        stats_.unplaced += left_over;
         if (placed.empty())
             return;
         ++stats_.slices;
@@ -278,6 +283,8 @@ namespace pw
         {
             Region &r = regions_[p.region];
             r.area += p.length();
+            r.z_first = std::min(r.z_first, z);
+            r.z_last = std::max(r.z_last, z);
             for (size_t k = 0; k < p.u.size(); ++k)
             {
                 entries.push_back({p.x[k], p.y[k], Spot{p.region, p.u[k]}});
@@ -300,6 +307,7 @@ namespace pw
         const double largest = order.empty() ? 0.0 : regions_[order.front()].area;
         double next = 0;
         stats_.regions_kept = 0;
+        stats_.regions_total = static_cast<long>(regions_.size());
         for (int r : order)
         {
             Region &region = regions_[r];
@@ -381,5 +389,51 @@ namespace pw
             left = c;
         }
         return r;
+    }
+
+    std::vector<LayerUnfolding::RegionSummary> LayerUnfolding::largest_regions(size_t top) const
+    {
+        std::vector<int> order(regions_.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b)
+                         { return regions_[a].area > regions_[b].area; });
+        std::vector<RegionSummary> out;
+        for (size_t i = 0; i < order.size() && i < top; ++i)
+        {
+            const Region &r = regions_[order[i]];
+            out.push_back({r.u_max > r.u_min ? r.u_max - r.u_min : 0.0, r.area, r.z_first, r.z_last, r.offset >= 0});
+        }
+        return out;
+    }
+
+    double LayerUnfolding::total_area() const
+    {
+        double sum = 0;
+        for (const Region &r : regions_)
+            sum += r.area;
+        return sum;
+    }
+
+    double LayerUnfolding::kept_area() const
+    {
+        double sum = 0;
+        for (const Region &r : regions_)
+            if (r.offset >= 0)
+                sum += r.area;
+        return sum;
+    }
+
+    double LayerUnfolding::coverage(const std::vector<double> &u) const
+    {
+        if (slices_.empty() || u.empty())
+            return 0.0;
+        double total = 0;
+        for (const auto &slice : slices_)
+        {
+            const Rail r = rail(slice.first, u);
+            total += static_cast<double>(std::count_if(r.xs.begin(), r.xs.end(), [](double x) { return std::isfinite(x); })) /
+                     static_cast<double>(u.size());
+        }
+        return total / static_cast<double>(slices_.size());
     }
 } // namespace pw

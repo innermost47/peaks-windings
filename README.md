@@ -130,6 +130,9 @@ Options:
 * `--max-gap F`, `--max-turn F`: A trace carries on from the end of another across a gap of at most F voxels
   (default `60`), turning by at most F degrees (default `45`).
 * `--fill-px F`: Holes along the sheet up to F voxels long are bridged straight (default `30`).
+* `--min-region-share F`: Regions smaller than this share of the largest one (by area) are left out (default `0.02`).
+* `--diagnose-only`: Follows the sheet and prints the report (traces left out by reason, regions, coverage) without
+  reading the CT volume or writing any image; `--scroll` is not needed.
 * `--cache-mb F`: Only the volume chunks the slab actually crosses are read, one layer of the chunk grid along Z at a
   time; at most F MB of decoded chunks are held at once (default `1024`).
 * `--slab N` (MIP thickness, default `6`), `--step-z N`, `--max-width N` (default `1600`), `--z-min` / `--z-max`,

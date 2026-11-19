@@ -48,9 +48,27 @@ namespace pw
         {
             long slices = 0, inherited = 0, joined = 0, seeded = 0, dropped = 0;
             long regions_kept = 0; // after lay_out
+            // the traces left out, by reason (they sum to `dropped`), and the ones offered
+            long offered = 0, pulled = 0, too_short = 0, unplaced = 0;
+            long regions_total = 0; // before lay_out
+        };
+
+        // What a region amounts to, for diagnosis.
+        struct RegionSummary
+        {
+            double width = 0; // u extent (voxels)
+            double area = 0;
+            int z_first = 0, z_last = 0;
+            bool kept = false; // after lay_out
         };
 
         explicit LayerUnfolding(const Params &params) : params_(params) {}
+
+        // The `top` largest regions by area, the largest first.
+        std::vector<RegionSummary> largest_regions(size_t top) const;
+        // The total area of all the regions, and of the kept ones (after lay_out).
+        double total_area() const;
+        double kept_area() const;
 
         // The traces of the layer in the next slice (slices are given in increasing z).
         void add_slice(int z, const std::vector<Trace> &traces);
@@ -71,6 +89,9 @@ namespace pw
         // After lay_out: the sheet in slice z at the positions u of the image (increasing, evenly spaced), NaN where it
         // is unknown.
         Rail rail(int z, const std::vector<double> &u) const;
+
+        // After lay_out: the mean share of the columns u that a slice's rail covers (finite), over the slices placed.
+        double coverage(const std::vector<double> &u) const;
 
     private:
         // A trace: its points and the arc length at each of them.
@@ -98,6 +119,8 @@ namespace pw
             double u_max = -std::numeric_limits<double>::infinity();
             double area = 0;     // the length of its traces summed over the slices
             double offset = -1;  // after lay_out: where its u = u_min lies in the image (-1: left out)
+            int z_first = std::numeric_limits<int>::max(); // the slices it is present in
+            int z_last = std::numeric_limits<int>::min();
         };
         // Where a trace ends: its last point and the direction it leaves in (unit vector pointing out of the trace).
         struct End
