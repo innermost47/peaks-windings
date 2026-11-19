@@ -39,6 +39,7 @@ namespace
         int connections = 32;
         int z_min = INT_MIN, z_max = INT_MAX;
         int max_width = 1600; // widest image along the sheet (px)
+        double min_coverage = 0.0;  // percent: layers with a larger share of black are not unrolled
         bool diagnose_only = false; // follow the sheet and report, without reading the CT volume
         pw::SlabParams slab;
         pw::LayerUnfolding::Params unfolding;
@@ -176,6 +177,8 @@ namespace
                      "                      (default: 4)\n"
                      "  --min-region-share F regions smaller than this share of the largest (by area) are left out\n"
                      "                      (default: 0.02)\n"
+                     "  --min-coverage F    percent: a layer whose sheet position is known for less than F% of the image\n"
+                     "                      (after --fill-z) is skipped before the CT volume is read (default: 0, none)\n"
                      "  --max-width N       widest image along the sheet in px (default: 1600)\n"
                      "  --diagnose-only     follow the sheet and print the report (traces left out, regions, coverage),\n"
                      "                      without reading the CT volume or writing any image\n"
@@ -248,6 +251,8 @@ namespace
                 o.unfolding.inherit_radius_px = std::stod(value);
             else if (arg == "--min-region-share")
                 o.unfolding.min_region_share = std::stod(value);
+            else if (arg == "--min-coverage")
+                o.min_coverage = std::max(0.0, std::stod(value));
             else if (arg == "--max-width")
                 o.max_width = std::max(300, std::stoi(value));
             else if (arg == "--cache-mb")
@@ -316,6 +321,11 @@ namespace
             std::printf(", %.1f%% once the nearest slices (--fill-z %d) fill the holes",
                         100.0 * unfolding.coverage(u, true), o.unfolding.fill_z);
         std::printf(" (the rest stays black)\n");
+        const double shown_percent = 100.0 * unfolding.coverage(u, true);
+        const bool too_black = shown_percent < o.min_coverage;
+        if (o.min_coverage > 0)
+            std::printf("    - Coverage %.1f%% is %s the minimum %.1f%% (--min-coverage)\n", shown_percent,
+                        too_black ? "below" : "at or above", o.min_coverage);
         const double total_area = unfolding.total_area();
         std::printf("    - Regions kept hold %.1f%% of the trace length placed; the largest ones (u extent, slices, share):\n",
                     total_area > 0 ? 100.0 * unfolding.kept_area() / total_area : 0.0);
@@ -343,6 +353,12 @@ namespace
                     row[c] = std::isfinite(own.xs[c]) ? 255 : std::isfinite(filled.xs[c]) ? 128 : 0; });
             std::printf("--> Layer %d: diagnosis only, the CT volume is not read; coverage map: '%s'\n", layer,
                         pw::save_coverage_map(map, output).c_str());
+            return false;
+        }
+        if (too_black)
+        {
+            std::printf("--> Layer %d: skipped, too little of it is visible (%.1f%% < %.1f%%)\n", layer, shown_percent,
+                        o.min_coverage);
             return false;
         }
         std::printf("--> Unrolling:\n");

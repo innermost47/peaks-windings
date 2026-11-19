@@ -136,6 +136,8 @@ Options:
   trace missing for up to N-1 slices instead of restarting at u = 0 (default `1`: the previous slice only).
 * `--inherit-radius F`: A point finds the sheet of an earlier slice within F voxels (default `4`).
 * `--min-region-share F`: Regions smaller than this share of the largest one (by area) are left out (default `0.02`).
+* `--min-coverage P`: A layer whose sheet position is known for less than P percent of its image (after `--fill-z`)
+  is skipped once the sheet has been followed, before the CT volume is read (default `0`: none is).
 * `--diagnose-only`: Follows the sheet and prints the report (traces left out by reason, regions, coverage) without
   reading the CT volume or writing any image; `--scroll` is not needed. It also writes `<stem>_coverage.png`, what the
   image would show: white where the slice knows the sheet, grey where `--fill-z` fills in, black where nothing is known.
