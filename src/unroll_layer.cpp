@@ -112,21 +112,22 @@ namespace
                         where);
     }
 
-    // The CT volume: the one given, or else the one recorded for the scroll. It must have the shape of the surface volume
-    // peaks_windings read (the voxels of the result files); it is set in `settings`, for the caller to save.
+    // The CT volume: the one given, or else the one recorded for the scroll, at the shape of the surface volume
+    // peaks_windings read (the voxels of the result files): another level of the same multiscale store is taken when
+    // the one given has another shape. It is set in `settings`, for the caller to save.
     std::unique_ptr<pw::ZarrVolume> open_ct(const Options &o, pw::ScrollSettings &settings)
     {
         const std::string store = !o.scroll.empty() ? o.scroll : settings.ct.store;
         std::printf("--> CT volume: %s%s\n", store.c_str(), o.scroll.empty() ? " (recorded)" : "");
-        std::unique_ptr<pw::ZarrVolume> volume = pw::ZarrVolume::open(store, o.connections, o.slab.threads);
+        std::string level;
+        std::unique_ptr<pw::ZarrVolume> volume =
+            pw::ZarrVolume::open_level(store, settings.surface.shape, level, o.connections, o.slab.threads);
+        if (level != store)
+            std::printf("--> level with the surface shape %s: %s\n", pw::shape_text(settings.surface.shape).c_str(),
+                        level.c_str());
         std::printf("--> %s\n", volume->description().c_str());
         const std::vector<int64_t> shape(volume->shape().begin(), volume->shape().end());
-        if (!settings.surface.shape.empty() && settings.surface.shape != shape)
-            throw std::runtime_error("the CT volume has the shape " + pw::shape_text(shape) +
-                                     ", the surface volume peaks_windings read " +
-                                     pw::shape_text(settings.surface.shape) +
-                                     ": give --scroll the level of the CT store at that resolution (URL/0, URL/1...)");
-        settings.ct = {store, shape}; // saved once the sheet is known to lie inside it
+        settings.ct = {level, shape}; // saved once the sheet is known to lie inside it
         return volume;
     }
 

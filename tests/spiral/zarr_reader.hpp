@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -35,6 +36,12 @@ namespace pw
     public:
         static std::unique_ptr<ZarrVolume> open(const std::string &, int, int, double = 2.0)
         {
+            return std::make_unique<ZarrVolume>();
+        }
+        static std::unique_ptr<ZarrVolume> open_level(const std::string &url, const std::vector<int64_t> &,
+                                                      std::string &level_url, int, int, double = 2.0)
+        {
+            level_url = url;
             return std::make_unique<ZarrVolume>();
         }
         std::string description() const { return "synthetic spiral scroll"; }

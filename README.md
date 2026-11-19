@@ -110,7 +110,9 @@ layer with the most points is unrolled; a list unrolls each layer given, `all` e
 all of them; a layer with nothing to unroll is skipped. Without `--scroll`, the recorded CT volume is sampled.
 
 > **Coordinates:** the CT volume must have the same shape as the volume `peaks_windings` read: the points of the
-> JSON files are in voxels of that volume. `unroll_layer` stops when the recorded shapes differ.
+> JSON files are in voxels of that volume. When the CT store given has another shape, `unroll_layer` takes the level
+> of the same multiscale store (`URL/0`, `URL/1`...) with the recorded surface shape and records it; it stops only
+> when no level has that shape.
 
 The layer is followed along its own sheet, slice after slice, from the sheet traces written by `peaks_windings`
 (result files written before the traces existed cannot be unrolled: run `peaks_windings` again). Every column of the
@@ -164,7 +166,8 @@ Draws the path of an unrolled layer onto a few raw CT slices, to check that it s
 Options:
 
 * `--coords FILE`: The `_coords.npy` file written by `unroll_layer` (required).
-* `--scroll URL`: The CT volume given to `unroll_layer` (default: the one recorded for the scroll).
+* `--scroll URL`: The CT volume given to `unroll_layer` (default: the one recorded for the scroll); a store or any of
+  its levels, the level with the surface shape being found by itself.
 * `--scroll-name NAME`, `--results-dir DIR`: Where the recorded volumes are found (default `results/json/NAME/`).
 * `--sections N`: Slices drawn, evenly spaced over the image (default `8`), or `--z Z1,Z2,...` to pick them.
 * `--output DIR`: Output folder (default `sections/` next to the coords file).

@@ -749,4 +749,61 @@ namespace pw
         throw std::runtime_error("no zarr array found in " + url + " (tried the root, '0', 'data' and 'volume')");
     }
 
+    namespace
+    {
+        // The root of a multiscale store: `url` without its trailing level number (".../store.zarr/2" -> ".../store.zarr").
+        std::string multiscale_root(std::string url)
+        {
+            while (!url.empty() && (url.back() == '/' || url.back() == '\\'))
+                url.pop_back();
+            const size_t cut = url.find_last_of("/\\");
+            if (cut == std::string::npos || cut + 1 == url.size())
+                return url;
+            for (size_t i = cut + 1; i < url.size(); ++i)
+                if (url[i] < '0' || url[i] > '9')
+                    return url;
+            return url.substr(0, cut);
+        }
+
+        std::string shape_string(const std::vector<int64_t> &shape)
+        {
+            std::string s = "(";
+            for (size_t i = 0; i < shape.size(); ++i)
+                s += (i ? ", " : "") + std::to_string(shape[i]);
+            return s + ")";
+        }
+    } // namespace
+
+    std::unique_ptr<ZarrVolume> ZarrVolume::open_level(const std::string &url, const std::vector<int64_t> &shape,
+                                                       std::string &level_url, int connections, int threads,
+                                                       double cache_gb)
+    {
+        std::unique_ptr<ZarrVolume> volume = open(url, connections, threads, cache_gb);
+        if (shape.empty() || volume->shape() == shape)
+        {
+            level_url = url;
+            return volume;
+        }
+        // the levels are asked for in turn (a store over http cannot be listed), up to the first one missing
+        const std::string root = multiscale_root(url);
+        std::unique_ptr<Store> store = make_store(root, connections);
+        std::string levels;
+        for (int level = 0; level < 32; ++level)
+        {
+            std::optional<Meta> meta = find_array(*store, std::to_string(level) + "/");
+            if (!meta)
+                break;
+            const std::string candidate = root + "/" + std::to_string(level);
+            levels += "\n  " + candidate + ": " + shape_string(meta->shape);
+            if (meta->shape == shape)
+            {
+                level_url = candidate;
+                return std::make_unique<Volume>(std::move(store), std::move(*meta), candidate, threads, cache_gb);
+            }
+        }
+        throw std::runtime_error("no level of " + root + " has the shape " + shape_string(shape) + " (" + url +
+                                 " is " + shape_string(volume->shape()) + ")" +
+                                 (levels.empty() ? std::string("; it has no levels 0, 1...") : "; its levels:" + levels));
+    }
+
 } // namespace pw

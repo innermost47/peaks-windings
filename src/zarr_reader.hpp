@@ -23,6 +23,12 @@ namespace pw
    public:
       static std::unique_ptr<ZarrVolume> open(const std::string &url, int connections = 32, int threads = 0,
                                               double cache_gb = 2.0);
+      // The volume at `url` if it has `shape` (or `shape` is empty); otherwise the level of the same multiscale store
+      // (ROOT/0, ROOT/1...; ROOT is `url` without a trailing level number) that has it. Only the metadata of the
+      // levels is read. `level_url` receives the URL of the volume opened. Throws, listing the levels, when none fits.
+      static std::unique_ptr<ZarrVolume> open_level(const std::string &url, const std::vector<int64_t> &shape,
+                                                    std::string &level_url, int connections = 32, int threads = 0,
+                                                    double cache_gb = 2.0);
       virtual ~ZarrVolume() = default;
 
       virtual const std::vector<int64_t> &shape() const = 0;
