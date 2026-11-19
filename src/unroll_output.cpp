@@ -118,6 +118,18 @@ namespace pw
         }
     } // namespace
 
+    std::string save_coverage_map(const cv::Mat &map, const std::string &output_png)
+    {
+        CV_Assert(map.type() == CV_8U);
+        const std::filesystem::path out_path(output_png);
+        if (!out_path.parent_path().empty())
+            std::filesystem::create_directories(out_path.parent_path());
+        const std::string path = (out_path.parent_path() / (out_path.stem().string() + "_coverage.png")).string();
+        if (!cv::imwrite(path, map))
+            throw std::runtime_error("cannot write " + path);
+        return path;
+    }
+
     void save_unrolled(const UnrolledImage &im, const std::string &output_png)
     {
         cv::Mat image = im.values.clone();

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Anthony Charretier
 #include "layer_unfolding.hpp"
 #include "layers.hpp"
+#include "parallel.hpp"
 #include "scroll_settings.hpp"
 #include "slab_sampler.hpp"
 #include "unroll_output.hpp"
@@ -167,6 +168,12 @@ namespace
                      "  --max-turn F        degrees: ... and turning at most this much (default: 45)\n"
                      "  --fill-px F         voxels: holes along the sheet up to this long are bridged straight\n"
                      "                      (default: 30)\n"
+                     "  --fill-z N          slices: a column unknown in a slice takes the sheet of the nearest slice, at\n"
+                     "                      most N away, that knows it (default: 0, never)\n"
+                     "  --memory-slices N   slices looked back at to find the sheet of a trace: a region survives a\n"
+                     "                      trace missing for up to N-1 slices (default: 1, the previous slice only)\n"
+                     "  --inherit-radius F  voxels: a point finds the sheet of an earlier slice within this distance\n"
+                     "                      (default: 4)\n"
                      "  --min-region-share F regions smaller than this share of the largest (by area) are left out\n"
                      "                      (default: 0.02)\n"
                      "  --max-width N       widest image along the sheet in px (default: 1600)\n"
@@ -233,6 +240,12 @@ namespace
                 o.unfolding.max_turn_deg = std::stod(value);
             else if (arg == "--fill-px")
                 o.unfolding.fill_px = std::stod(value);
+            else if (arg == "--fill-z")
+                o.unfolding.fill_z = std::max(0, std::stoi(value));
+            else if (arg == "--memory-slices")
+                o.unfolding.memory_slices = std::max(1, std::stoi(value));
+            else if (arg == "--inherit-radius")
+                o.unfolding.inherit_radius_px = std::stod(value);
             else if (arg == "--min-region-share")
                 o.unfolding.min_region_share = std::stod(value);
             else if (arg == "--max-width")
@@ -297,22 +310,41 @@ namespace
         std::printf("    - Traces offered: %ld; left out: %ld pulled too far (--max-pull), %ld too short, "
                     "%ld not placed; regions: %ld made, %ld kept\n",
                     st.offered, st.pulled, st.too_short, st.unplaced, st.regions_total, st.regions_kept);
-        std::printf("    - Coverage: %.1f%% of the columns have a sheet position in an average slice (the rest stays black)\n",
-                    100.0 * unfolding.coverage(u));
+        std::printf("    - Coverage: %.1f%% of the columns have a sheet position in an average slice",
+                    100.0 * unfolding.coverage(u, false));
+        if (o.unfolding.fill_z > 0)
+            std::printf(", %.1f%% once the nearest slices (--fill-z %d) fill the holes",
+                        100.0 * unfolding.coverage(u, true), o.unfolding.fill_z);
+        std::printf(" (the rest stays black)\n");
         const double total_area = unfolding.total_area();
         std::printf("    - Regions kept hold %.1f%% of the trace length placed; the largest ones (u extent, slices, share):\n",
                     total_area > 0 ? 100.0 * unfolding.kept_area() / total_area : 0.0);
         for (const pw::LayerUnfolding::RegionSummary &r : unfolding.largest_regions(10))
             std::printf("        %s width %9.0f voxels, Z %d -> %d, %.1f%% of the length\n", r.kept ? "kept   " : "left out",
                         r.width, r.z_first, r.z_last, total_area > 0 ? 100.0 * r.area / total_area : 0.0);
-        if (o.diagnose_only)
-        {
-            std::printf("--> Layer %d: diagnosis only, the CT volume is not read\n", layer);
-            return false;
-        }
+        const std::string name = "unrolled_layer_" + std::to_string(layer) + ".png";
+        const std::string output =
+            !o.output.empty()
+                ? o.output
+                : (std::filesystem::path("results") / "png" / o.scroll_name / ("layer_" + std::to_string(layer)) / name)
+                      .string();
         std::vector<int> dense_z;
         for (int z = unfolding.z_first(); z <= unfolding.z_last(); z += o.step_z)
             dense_z.push_back(z);
+        if (o.diagnose_only)
+        {
+            // what the image would show: white where the slice knows the sheet, grey where a near slice fills in
+            cv::Mat map(static_cast<int>(dense_z.size()), width, CV_8U, cv::Scalar(0));
+            pw::parallel_for(map.rows, o.slab.threads > 0 ? o.slab.threads : pw::hardware_threads(), [&](int r, int)
+                             {
+                const pw::Rail own = unfolding.rail(dense_z[r], u, false), filled = unfolding.rail(dense_z[r], u, true);
+                unsigned char *row = map.ptr<unsigned char>(r);
+                for (int c = 0; c < width; ++c)
+                    row[c] = std::isfinite(own.xs[c]) ? 255 : std::isfinite(filled.xs[c]) ? 128 : 0; });
+            std::printf("--> Layer %d: diagnosis only, the CT volume is not read; coverage map: '%s'\n", layer,
+                        pw::save_coverage_map(map, output).c_str());
+            return false;
+        }
         std::printf("--> Unrolling:\n");
         std::printf("    - Width: %d pixels along the sheet (%.2f voxels per pixel)\n", width, span / (width - 1));
         std::printf("    - Height: %zu CT slices (Z=%d to %d)\n", dense_z.size(), dense_z.front(), dense_z.back());
@@ -341,12 +373,6 @@ namespace
         image.title = "Unrolled layer " + std::to_string(layer) + " (slab MIP)";
         image.x_label = "Position along the sheet (voxels)";
         image.x_max = span;
-        const std::string name = "unrolled_layer_" + std::to_string(layer) + ".png";
-        const std::string output =
-            !o.output.empty()
-                ? o.output
-                : (std::filesystem::path("results") / "png" / o.scroll_name / ("layer_" + std::to_string(layer)) / name)
-                      .string();
         pw::save_unrolled(image, output);
         return true;
     }

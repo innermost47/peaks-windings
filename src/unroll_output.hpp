@@ -19,4 +19,8 @@ namespace pw
     // Writes the image contrast-stretched to 8 bits as <stem>_full.png, a figure with graduated axes as `output_png`,
     // and the coordinates of its pixels as <stem>_coords.npy (float32, rows x cols x 3).
     void save_unrolled(const UnrolledImage &im, const std::string &output_png);
+
+    // Writes a coverage map (CV_8U, one row per slice, one column per position along the sheet) as
+    // <stem>_coverage.png next to `output_png`, and returns its path.
+    std::string save_coverage_map(const cv::Mat &map, const std::string &output_png);
 } // namespace pw

@@ -5,6 +5,7 @@
 #include "point_grid.hpp"
 #include "rail.hpp"
 
+#include <deque>
 #include <limits>
 #include <map>
 #include <vector>
@@ -33,6 +34,8 @@ namespace pw
             double max_pull = 3.0;        // sigmas: traces pulled further are left out (0: every trace is kept)
             double min_trace_px = 20;     // shorter traces are left out
             double inherit_radius_px = 4; // a point finds the sheet of the previous slice within this distance
+            int fill_z = 0;               // slices: an unknown column borrows the sheet of a slice this near (0: never)
+            int memory_slices = 1;       // slices looked back at to find the sheet (1: the previous one only)
             double min_inherited = 0.3;   // share of the points of a trace that must find it to inherit
             double max_misfit_px = 8;     // median distance between the u found and the rigid fit of the trace
             double max_gap_px = 60;       // ends further apart are not joined
@@ -88,10 +91,12 @@ namespace pw
 
         // After lay_out: the sheet in slice z at the positions u of the image (increasing, evenly spaced), NaN where it
         // is unknown.
-        Rail rail(int z, const std::vector<double> &u) const;
+        // With `fill_z` and params.fill_z > 0, the columns unknown in slice z take the sheet of the nearest slice (at
+        // most params.fill_z away) that knows them.
+        Rail rail(int z, const std::vector<double> &u, bool fill_z = true) const;
 
         // After lay_out: the mean share of the columns u that a slice's rail covers (finite), over the slices placed.
-        double coverage(const std::vector<double> &u) const;
+        double coverage(const std::vector<double> &u, bool fill_z = true) const;
 
     private:
         // A trace: its points and the arc length at each of them.
@@ -128,6 +133,8 @@ namespace pw
             double x = 0, y = 0, dx = 0, dy = 0;
         };
 
+        // The rail of slice z from its own traces only.
+        Rail slice_rail(int z, const std::vector<double> &u) const;
         static Polyline polyline(const Trace &trace);
         static Placed place(const Polyline &line, int region, double offset, int direction);
         End end_of(const Polyline &line, bool last) const;
@@ -138,7 +145,10 @@ namespace pw
         Params params_;
         std::map<int, std::vector<Placed>> slices_; // z -> the placed traces, the first ones prevailing where they overlap
         std::vector<Region> regions_;
-        PointGrid<Spot> reference_; // the last slice placed
+        // The last slices placed, the newest first (at most params_.memory_slices): a point finds the sheet in the newest
+        // one that holds it.
+        std::deque<PointGrid<Spot>> memory_;
+        const Spot *recall(double x, double y) const;
         double width_ = 0;
         double x_max_ = 0, y_max_ = 0;
         Stats stats_;

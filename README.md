@@ -130,9 +130,15 @@ Options:
 * `--max-gap F`, `--max-turn F`: A trace carries on from the end of another across a gap of at most F voxels
   (default `60`), turning by at most F degrees (default `45`).
 * `--fill-px F`: Holes along the sheet up to F voxels long are bridged straight (default `30`).
+* `--fill-z N`: A column with no sheet position in a slice takes the one of the nearest slice, at most N away, that
+  knows it (the sheet moves little along Z), instead of staying black (default `0`: never).
+* `--memory-slices N`: A trace finds its sheet in the last N slices placed, the newest first, so a region survives a
+  trace missing for up to N-1 slices instead of restarting at u = 0 (default `1`: the previous slice only).
+* `--inherit-radius F`: A point finds the sheet of an earlier slice within F voxels (default `4`).
 * `--min-region-share F`: Regions smaller than this share of the largest one (by area) are left out (default `0.02`).
 * `--diagnose-only`: Follows the sheet and prints the report (traces left out by reason, regions, coverage) without
-  reading the CT volume or writing any image; `--scroll` is not needed.
+  reading the CT volume or writing any image; `--scroll` is not needed. It also writes `<stem>_coverage.png`, what the
+  image would show: white where the slice knows the sheet, grey where `--fill-z` fills in, black where nothing is known.
 * `--cache-mb F`: Only the volume chunks the slab actually crosses are read, one layer of the chunk grid along Z at a
   time; at most F MB of decoded chunks are held at once (default `1024`).
 * `--slab N` (MIP thickness, default `6`), `--step-z N`, `--max-width N` (default `1600`), `--z-min` / `--z-max`,

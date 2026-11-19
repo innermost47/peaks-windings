@@ -74,11 +74,19 @@ namespace pw
         return e;
     }
 
+    const LayerUnfolding::Spot *LayerUnfolding::recall(double x, double y) const
+    {
+        for (const PointGrid<Spot> &grid : memory_)
+            if (const auto *entry = grid.nearest(x, y))
+                return &entry->value;
+        return nullptr;
+    }
+
     // Traces lying on the sheet of the previous slice take the region and the u they find there, as a rigid fit.
     void LayerUnfolding::inherit(const std::vector<Polyline> &candidates, std::vector<char> &done,
                                  std::vector<Placed> &placed)
     {
-        if (reference_.empty())
+        if (memory_.empty())
             return;
         struct Fit
         {
@@ -98,10 +106,10 @@ namespace pw
             found.clear();
             votes.clear();
             for (size_t k = 0; k < c.s.size(); ++k)
-                if (const auto *spot = reference_.nearest(c.x[k], c.y[k]))
+                if (const Spot *spot = recall(c.x[k], c.y[k]))
                 {
-                    found.emplace_back(k, spot->value);
-                    ++votes[spot->value.region];
+                    found.emplace_back(k, *spot);
+                    ++votes[spot->region];
                 }
             if (found.empty())
                 continue;
@@ -294,7 +302,9 @@ namespace pw
                 r.u_max = std::max<double>(r.u_max, p.u[k]);
             }
         }
-        reference_ = PointGrid<Spot>(std::move(entries), params_.inherit_radius_px);
+        memory_.emplace_front(std::move(entries), params_.inherit_radius_px);
+        while (static_cast<int>(memory_.size()) > std::max(1, params_.memory_slices))
+            memory_.pop_back();
         slices_[z] = std::move(placed);
     }
 
@@ -320,7 +330,36 @@ namespace pw
         width_ = std::max(0.0, next - params_.region_gap_px);
     }
 
-    Rail LayerUnfolding::rail(int z, const std::vector<double> &u) const
+    Rail LayerUnfolding::rail(int z, const std::vector<double> &u, bool fill_z) const
+    {
+        Rail r = slice_rail(z, u);
+        if (!fill_z || params_.fill_z < 1)
+            return r;
+        // columns unknown in this slice take the sheet of the nearest slice that knows them (the columns of a region
+        // are the same in every slice)
+        size_t missing = 0;
+        for (double x : r.xs)
+            missing += !std::isfinite(x);
+        for (int d = 1; d <= params_.fill_z && missing > 0; ++d)
+            for (int side : {-1, 1})
+            {
+                if (slices_.find(z + side * d) == slices_.end())
+                    continue;
+                const Rail near = slice_rail(z + side * d, u);
+                for (size_t c = 0; c < u.size(); ++c)
+                    if (!std::isfinite(r.xs[c]) && std::isfinite(near.xs[c]))
+                    {
+                        r.xs[c] = near.xs[c];
+                        r.ys[c] = near.ys[c];
+                        r.nx[c] = near.nx[c];
+                        r.ny[c] = near.ny[c];
+                        --missing;
+                    }
+            }
+        return r;
+    }
+
+    Rail LayerUnfolding::slice_rail(int z, const std::vector<double> &u) const
     {
         const size_t n = u.size();
         Rail r;
@@ -423,14 +462,14 @@ namespace pw
         return sum;
     }
 
-    double LayerUnfolding::coverage(const std::vector<double> &u) const
+    double LayerUnfolding::coverage(const std::vector<double> &u, bool fill_z) const
     {
         if (slices_.empty() || u.empty())
             return 0.0;
         double total = 0;
         for (const auto &slice : slices_)
         {
-            const Rail r = rail(slice.first, u);
+            const Rail r = rail(slice.first, u, fill_z);
             total += static_cast<double>(std::count_if(r.xs.begin(), r.xs.end(), [](double x) { return std::isfinite(x); })) /
                      static_cast<double>(u.size());
         }
