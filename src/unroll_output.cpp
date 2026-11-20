@@ -318,13 +318,26 @@ namespace pw
                 out[c] = lut[std::min(std::max(static_cast<int>(row[c] * 256.0), 0), 255)];
         }
 
-        const std::filesystem::path out_path(output_png);
+        const int z_start = im.z_start, z_end = im.z_end;
+        const std::filesystem::path raw_out(output_png);
+        const std::string z_folder = "z_" + std::to_string(z_start) + "_" + std::to_string(z_end);
+        const std::filesystem::path out_path = raw_out.parent_path() / z_folder / raw_out.filename();
+        const std::string final_png = out_path.string();
+
         if (!out_path.parent_path().empty())
             std::filesystem::create_directories(out_path.parent_path());
+
         const std::string full_png =
             (out_path.parent_path() / (out_path.stem().string() + "_full.png")).string();
-        if (!cv::imwrite(full_png, gray))
-            throw std::runtime_error("cannot write " + full_png);
+        try
+        {
+            if (!cv::imwrite(full_png, gray))
+                throw std::runtime_error("cannot write " + full_png);
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "[error] Failed to save '%s': %s\n", full_png.c_str(), e.what());
+        }
 
         const std::string coords_npy = (out_path.parent_path() / (out_path.stem().string() + "_coords.npy")).string();
         try
@@ -409,18 +422,16 @@ namespace pw
         try
         {
             char range[64];
-            const int z_start = im.z_start, z_end = im.z_end;
             std::snprintf(range, sizeof(range), " | Z = [%d -> %d]", z_start, z_end);
-            save_figure(output_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
+            save_figure(final_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
             std::printf("--> Image saved to: '%s' (full: '%s', coords.npy: '%s', coords.npz: '%s', values.npy: '%s', values.npz: '%s')\n",
-                        output_png.c_str(), full_png.c_str(),
+                        final_png.c_str(), full_png.c_str(),
                         coords_npy.c_str(), coords_npz.c_str(),
                         values_npy.c_str(), values_npz.c_str());
         }
         catch (const std::exception &e)
         {
-            std::fprintf(stderr, "[error] Failed to save figure '%s': %s\n", output_png.c_str(), e.what());
+            std::fprintf(stderr, "[error] Failed to save figure '%s': %s\n", final_png.c_str(), e.what());
         }
-
     }
 } // namespace pw
