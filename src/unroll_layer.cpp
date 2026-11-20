@@ -388,6 +388,7 @@ namespace
         pw::UnrolledImage image;
         image.values = sampled.values;
         image.coords = sampled.coords;
+        image.filled = sampled.filled;
         image.z_start = dense_z.front();
         image.z_end = dense_z.back();
         image.title = "Unrolled layer " + std::to_string(layer) + " (slab MIP)";

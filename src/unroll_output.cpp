@@ -66,7 +66,8 @@ namespace pw
 
         std::string make_npy_header(const cv::Mat &data)
         {
-            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
+            CV_Assert(data.isContinuous() &&
+                      (data.type() == CV_32FC1 || data.type() == CV_32FC3 || data.type() == CV_32FC4));
 
             std::string shape_str;
             if (data.channels() == 1)
@@ -83,7 +84,8 @@ namespace pw
 
         void save_npy(const std::string &path, const cv::Mat &data)
         {
-            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
+            CV_Assert(data.isContinuous() &&
+                      (data.type() == CV_32FC1 || data.type() == CV_32FC3 || data.type() == CV_32FC4));
             const std::string header = make_npy_header(data);
             std::ofstream f(path, std::ios::binary);
             const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
@@ -99,7 +101,8 @@ namespace pw
 
         void save_npz(const std::string &path, const std::string &entry_name, const cv::Mat &data)
         {
-            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
+            CV_Assert(data.isContinuous() &&
+                      (data.type() == CV_32FC1 || data.type() == CV_32FC3 || data.type() == CV_32FC4));
 
             const std::string filename_in_zip = (entry_name.size() >= 4 && entry_name.rfind(".npy") == entry_name.size() - 4)
                                                     ? entry_name
@@ -313,6 +316,28 @@ namespace pw
 
         const std::string coords_npz = (out_path.parent_path() / (out_path.stem().string() + "_coords.npz")).string();
         save_npz(coords_npz, "coords", coords);
+
+        if (!im.filled.empty() && !coords.empty())
+        {
+            cv::Mat meta(coords.size(), CV_32FC4, cv::Scalar::all(std::numeric_limits<float>::quiet_NaN()));
+            for (int r = 0; r < meta.rows; ++r)
+            {
+                const cv::Vec3f *c = coords.ptr<cv::Vec3f>(r);
+                const unsigned char *f = im.filled.ptr<unsigned char>(r);
+                cv::Vec4f *out = meta.ptr<cv::Vec4f>(r);
+                for (int col = 0; col < meta.cols; ++col)
+                {
+                    if (!std::isfinite(c[col][0]))
+                        continue;
+                    out[col] = cv::Vec4f(c[col][0], c[col][1], c[col][2],
+                                         f[col] ? 1.0f : 0.0f);
+                }
+            }
+            const std::string meta_npy =
+                (out_path.parent_path() / (out_path.stem().string() + "_coords_meta.npy")).string();
+            save_npy(meta_npy, meta);
+            std::printf("--> coords_meta (4 channels x,y,z,filled): '%s'\n", meta_npy.c_str());
+        }
 
         cv::Mat values_f32;
         im.values.convertTo(values_f32, CV_32FC1);

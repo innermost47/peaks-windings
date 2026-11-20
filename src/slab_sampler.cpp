@@ -53,8 +53,8 @@ namespace pw
         }
 
         template <class T>
-        void sample_columns(const ChunkMosaic &m, const Rail &r, int half_thick, int z, int k0, int k1, double *row,
-                            cv::Vec3f *where)
+        void sample_columns(const ChunkMosaic &m, const Rail &r, int half_thick, int z, int k0, int k1,
+                            double *row, cv::Vec3f *where, unsigned char *filled)
         {
             for (int k = k0; k < k1; ++k)
             {
@@ -77,34 +77,35 @@ namespace pw
                                       : z;
                 where[k] = cv::Vec3f(static_cast<float>(r.xs[k]), static_cast<float>(r.ys[k]),
                                      static_cast<float>(z_src));
+                filled[k] = (z_src != z) ? 1 : 0;
             }
         }
 
-        void sample_columns(const ChunkMosaic &m, const Rail &r, int half_thick, int z, int k0, int k1, double *row,
-                            cv::Vec3f *where)
+        void sample_columns(const ChunkMosaic &m, const Rail &r, int half_thick, int z, int k0, int k1,
+                            double *row, cv::Vec3f *where, unsigned char *filled)
         {
             switch (CV_MAT_DEPTH(m.cv_type()))
             {
             case CV_8U:
-                sample_columns<unsigned char>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<unsigned char>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_8S:
-                sample_columns<signed char>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<signed char>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_16U:
-                sample_columns<unsigned short>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<unsigned short>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_16S:
-                sample_columns<short>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<short>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_32S:
-                sample_columns<int>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<int>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_32F:
-                sample_columns<float>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<float>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             case CV_64F:
-                sample_columns<double>(m, r, half_thick, z, k0, k1, row, where);
+                sample_columns<double>(m, r, half_thick, z, k0, k1, row, where, filled);
                 break;
             default:
                 throw std::runtime_error("unsupported voxel type");
@@ -133,6 +134,7 @@ namespace pw
         cv::Mat image = cv::Mat::zeros(static_cast<int>(dense_z.size()), width, CV_64F);
         // where every pixel was taken in the volume: (x, y, z), NaN where nothing was sampled
         cv::Mat coords(image.size(), CV_32FC3, cv::Scalar::all(std::numeric_limits<float>::quiet_NaN()));
+        cv::Mat filled = cv::Mat::zeros(image.size(), CV_8U);
 
         std::vector<int> stamp(static_cast<size_t>(mosaic.tile_count()), -1);
         int run_id = 0;
@@ -168,9 +170,11 @@ namespace pw
                     mosaic.hold(layer, run);
                     parallel_for(n, threads, [&](int i, int)
                                  {
-                        const int r = static_cast<int>(i0) + i;
-                        sample_columns(mosaic, rails[i], half_thick, dense_z[i0 + i], k0, k1, image.ptr<double>(r),
-                                       coords.ptr<cv::Vec3f>(r)); });
+    const int r = static_cast<int>(i0) + i;
+    sample_columns(mosaic, rails[i], half_thick, dense_z[i0 + i], k0, k1,
+                   image.ptr<double>(r),
+                   coords.ptr<cv::Vec3f>(r),
+                   filled.ptr<unsigned char>(r)); });
                 }
                 run.clear();
                 ++run_id;
@@ -195,6 +199,6 @@ namespace pw
             std::fflush(stdout);
             i0 = i1;
         }
-        return {image, coords};
+        return {image, coords, filled};
     }
 } // namespace pw

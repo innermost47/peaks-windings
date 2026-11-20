@@ -12,9 +12,9 @@ namespace pw
 {
     struct SlabParams
     {
-        int slab = 6;            // thickness across the sheet of the maximum intensity projection (voxels)
-        double cache_mb = 1024;  // memory budget of the decoded chunks held at once
-        int threads = 0;         // 0: all hardware threads
+        int slab = 6;           // thickness across the sheet of the maximum intensity projection (voxels)
+        double cache_mb = 1024; // memory budget of the decoded chunks held at once
+        int threads = 0;        // 0: all hardware threads
     };
 
     // What was sampled: one row per slice, one column per point of the rails.
@@ -22,6 +22,7 @@ namespace pw
     {
         cv::Mat values; // CV_64F, the maximum across the sheet; 0 where nothing was sampled
         cv::Mat coords; // CV_32FC3, the volume coordinates (x, y, z) of every pixel; NaN where nothing was sampled
+        cv::Mat filled; // CV_8U
     };
 
     // Samples the volume along the rails of the slices `dense_z` (rail(z) gives `width` points), as a maximum
