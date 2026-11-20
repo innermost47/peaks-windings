@@ -31,20 +31,20 @@ namespace pw
     public:
         struct Params
         {
-            double max_pull = 3.0;        // sigmas: traces pulled further are left out (0: every trace is kept)
-            double min_trace_px = 20;     // shorter traces are left out
-            double inherit_radius_px = 4; // a point finds the sheet of the previous slice within this distance
-            int fill_z = 0;               // slices: an unknown column borrows the sheet of a slice this near (0: never)
-            int memory_slices = 1;       // slices looked back at to find the sheet (1: the previous one only)
-            double min_inherited = 0.3;   // share of the points of a trace that must find it to inherit
-            double max_misfit_px = 8;     // median distance between the u found and the rigid fit of the trace
-            double max_gap_px = 60;       // ends further apart are not joined
-            double max_turn_deg = 45;     // nor ends whose directions turn more than this
-            double end_tangent_px = 10;   // length of trace over which the direction of an end is measured
-            double fill_px = 30;          // holes along the sheet up to this long are bridged straight
-            double min_seed_px = 150;     // shorter traces never start a region
+            double max_pull = 3.0;          // sigmas: traces pulled further are left out (0: every trace is kept)
+            double min_trace_px = 20;       // shorter traces are left out
+            double inherit_radius_px = 4;   // a point finds the sheet of the previous slice within this distance
+            int fill_z = 0;                 // slices: an unknown column borrows the sheet of a slice this near (0: never)
+            int memory_slices = 1;          // slices looked back at to find the sheet (1: the previous one only)
+            double min_inherited = 0.3;     // share of the points of a trace that must find it to inherit
+            double max_misfit_px = 8;       // median distance between the u found and the rigid fit of the trace
+            double max_gap_px = 60;         // ends further apart are not joined
+            double max_turn_deg = 45;       // nor ends whose directions turn more than this
+            double end_tangent_px = 10;     // length of trace over which the direction of an end is measured
+            double fill_px = 30;            // holes along the sheet up to this long are bridged straight
+            double min_seed_px = 150;       // shorter traces never start a region
             double min_region_share = 0.02; // regions smaller than this share of the largest are left out (area)
-            double region_gap_px = 40;    // blank columns between two regions of the image
+            double region_gap_px = 40;      // blank columns between two regions of the image
         };
 
         struct Stats
@@ -98,6 +98,8 @@ namespace pw
         // After lay_out: the mean share of the columns u that a slice's rail covers (finite), over the slices placed.
         double coverage(const std::vector<double> &u, bool fill_z = true) const;
 
+        void print_region_seams() const;
+
     private:
         // A trace: its points and the arc length at each of them.
         struct Polyline
@@ -122,8 +124,8 @@ namespace pw
         {
             double u_min = std::numeric_limits<double>::infinity();
             double u_max = -std::numeric_limits<double>::infinity();
-            double area = 0;     // the length of its traces summed over the slices
-            double offset = -1;  // after lay_out: where its u = u_min lies in the image (-1: left out)
+            double area = 0;                               // the length of its traces summed over the slices
+            double offset = -1;                            // after lay_out: where its u = u_min lies in the image (-1: left out)
             int z_first = std::numeric_limits<int>::max(); // the slices it is present in
             int z_last = std::numeric_limits<int>::min();
         };

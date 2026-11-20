@@ -250,6 +250,40 @@ namespace pw
         }
     }
 
+    void LayerUnfolding::print_region_seams() const
+    {
+        std::printf("--> Coexistence of regions (minimum distance between traces at different Z levels):\n");
+        for (int z : {4020, 4180, 4340, 4500})
+        {
+            const auto it = slices_.find(z);
+            if (it == slices_.end())
+                continue;
+            for (size_t a = 0; a < regions_.size(); ++a)
+                for (size_t b = a + 1; b < regions_.size(); ++b)
+                {
+                    bool pa_found = false, pb_found = false;
+                    double best = 1e9;
+                    for (const Placed &p1 : it->second)
+                    {
+                        if (p1.region != (int)a)
+                            continue;
+                        pa_found = true;
+                        for (const Placed &p2 : it->second)
+                        {
+                            if (p2.region != (int)b)
+                                continue;
+                            pb_found = true;
+                            for (size_t i = 0; i < p1.x.size(); ++i)
+                                for (size_t j = 0; j < p2.x.size(); ++j)
+                                    best = std::min(best, std::hypot<double>(p1.x[i] - p2.x[j], p1.y[i] - p2.y[j]));
+                        }
+                    }
+                    if (pa_found && pb_found && best < 200)
+                        std::printf("   - z=%d R%zu-R%zu: gap = %.1f voxels\n", z, a, b, best);
+                }
+        }
+    }
+
     void LayerUnfolding::add_slice(int z, const std::vector<Trace> &traces)
     {
         std::vector<Polyline> candidates;
@@ -470,7 +504,8 @@ namespace pw
         for (const auto &slice : slices_)
         {
             const Rail r = rail(slice.first, u, fill_z);
-            total += static_cast<double>(std::count_if(r.xs.begin(), r.xs.end(), [](double x) { return std::isfinite(x); })) /
+            total += static_cast<double>(std::count_if(r.xs.begin(), r.xs.end(), [](double x)
+                                                       { return std::isfinite(x); })) /
                      static_cast<double>(u.size());
         }
         return total / static_cast<double>(slices_.size());

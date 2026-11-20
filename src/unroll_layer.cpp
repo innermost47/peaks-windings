@@ -31,14 +31,14 @@ namespace
     {
         std::string scroll_name = "scroll"; // folders: results/{json,png}/<scroll name>/
         std::string results_dir;            // empty: results/json/<scroll name>
-        std::string layer_spec;       // empty: the densest layer; "all"; or "N[,M...]"
-        size_t min_layer_points = 1000; // --layer all: smaller layers are not unrolled
+        std::string layer_spec;             // empty: the densest layer; "all"; or "N[,M...]"
+        size_t min_layer_points = 1000;     // --layer all: smaller layers are not unrolled
         std::string scroll;
         int step_z = 1;
         std::string output; // empty: results/png/<scroll name>/layer_<N>/unrolled_layer_<N>.png
         int connections = 32;
         int z_min = INT_MIN, z_max = INT_MAX;
-        int max_width = 1600; // widest image along the sheet (px)
+        int max_width = 1600;       // widest image along the sheet (px)
         double min_coverage = 0.0;  // percent: layers with a larger share of black are not unrolled
         bool diagnose_only = false; // follow the sheet and report, without reading the CT volume
         pw::SlabParams slab;
@@ -179,7 +179,7 @@ namespace
                      "                      (default: 0.02)\n"
                      "  --min-coverage F    percent: a layer whose sheet position is known for less than F% of the image\n"
                      "                      (after --fill-z) is skipped before the CT volume is read (default: 0, none)\n"
-                     "  --max-width N       widest image along the sheet in px (default: 1600)\n"
+                     "  --max-width N       widest image along the sheet in px (default: 1600; 0 = 1 px per voxel)\n"
                      "  --diagnose-only     follow the sheet and print the report (traces left out, regions, coverage),\n"
                      "                      without reading the CT volume or writing any image\n"
                      "  --cache-mb F        memory budget of the decoded volume chunks held at once, in MB\n"
@@ -254,7 +254,7 @@ namespace
             else if (arg == "--min-coverage")
                 o.min_coverage = std::max(0.0, std::stod(value));
             else if (arg == "--max-width")
-                o.max_width = std::max(300, std::stoi(value));
+                o.max_width = std::max(0, std::stoi(value)); // 0 = auto (1 px par voxel)
             else if (arg == "--cache-mb")
                 o.slab.cache_mb = std::stod(value);
             else if (arg == "--z-min")
@@ -301,6 +301,7 @@ namespace
             return false;
         }
         unfolding.lay_out();
+        unfolding.print_region_seams();
         const pw::LayerUnfolding::Stats &st = unfolding.stats();
         std::printf("--> Sheet followed over %ld slice(s): %ld trace(s) inherited from the slice before, %ld joined "
                     "across a junction or a break, %ld seeded a region, %ld left out; %ld region(s) laid side by side\n",
@@ -308,7 +309,9 @@ namespace
 
         // the columns: evenly spaced positions along the sheet
         const double span = unfolding.width();
-        const int width = std::max(2, std::min(o.max_width, static_cast<int>(std::ceil(span)) + 1));
+        const int native_width = static_cast<int>(std::ceil(span)) + 1;
+        const int width = std::max(2, o.max_width == 0 ? native_width
+                                                       : std::min(o.max_width, native_width));
         std::vector<double> u(width);
         for (int k = 0; k < width; ++k)
             u[k] = span * k / (width - 1);
@@ -371,9 +374,10 @@ namespace
             volume = open_ct(o, settings);
         check_resolution(unfolding, *volume);
         settings.save();
+        const bool do_fill = o.unfolding.fill_z > 0;
         const pw::SlabImage sampled = pw::sample_slab(
             dense_z, width, [&](int z)
-            { return unfolding.rail(z, u); },
+            { return unfolding.rail(z, u, do_fill); },
             o.slab, *volume);
         if (!sampled_anything(sampled.coords))
         {
