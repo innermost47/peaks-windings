@@ -84,36 +84,50 @@ namespace pw
 
         void save_npy(const std::string &path, const cv::Mat &data)
         {
-            CV_Assert(data.isContinuous() &&
-                      (data.type() == CV_32FC1 || data.type() == CV_32FC3 || data.type() == CV_32FC4));
-            const std::string header = make_npy_header(data);
+            CV_Assert(!data.empty());
+            CV_Assert(data.channels() == 1 || data.channels() == 3 || data.channels() == 4);
+
+            cv::Mat prepared = data;
+            if (prepared.depth() != CV_32F)
+                prepared.convertTo(prepared, CV_32F);
+            if (!prepared.isContinuous())
+                prepared = prepared.clone();
+
+            const std::string header = make_npy_header(prepared);
             std::ofstream f(path, std::ios::binary);
             const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
                                              static_cast<unsigned char>(header.size() & 0xff),
                                              static_cast<unsigned char>(header.size() >> 8)};
             f.write(reinterpret_cast<const char *>(magic), 10);
             f.write(header.data(), static_cast<std::streamsize>(header.size()));
-            f.write(reinterpret_cast<const char *>(data.data),
-                    static_cast<std::streamsize>(data.total() * data.elemSize()));
+            f.write(reinterpret_cast<const char *>(prepared.data),
+                    static_cast<std::streamsize>(prepared.total() * prepared.elemSize()));
             if (!f)
                 throw std::runtime_error("cannot write " + path);
         }
 
+
         void save_npz(const std::string &path, const std::string &entry_name, const cv::Mat &data)
         {
-            CV_Assert(data.isContinuous() &&
-                      (data.type() == CV_32FC1 || data.type() == CV_32FC3 || data.type() == CV_32FC4));
+            CV_Assert(!data.empty());
+            CV_Assert(data.channels() == 1 || data.channels() == 3 || data.channels() == 4);
+
+            cv::Mat prepared = data;
+            if (prepared.depth() != CV_32F)
+                prepared.convertTo(prepared, CV_32F);
+            if (!prepared.isContinuous())
+                prepared = prepared.clone();
 
             const std::string filename_in_zip = (entry_name.size() >= 4 && entry_name.rfind(".npy") == entry_name.size() - 4)
                                                     ? entry_name
                                                     : entry_name + ".npy";
-            const std::string header = make_npy_header(data);
+            const std::string header = make_npy_header(prepared);
 
             const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
                                              static_cast<unsigned char>(header.size() & 0xff),
                                              static_cast<unsigned char>(header.size() >> 8)};
 
-            const size_t raw_data_size = data.total() * data.elemSize();
+            const size_t raw_data_size = prepared.total() * prepared.elemSize();
             const size_t npy_size = 10 + header.size() + raw_data_size;
 
             if (npy_size >= 0xFFFFFFFFULL)
@@ -128,7 +142,7 @@ namespace pw
             uint32_t crc = 0xFFFFFFFF;
             crc = crc32_update(crc, magic, 10);
             crc = crc32_update(crc, reinterpret_cast<const unsigned char *>(header.data()), header.size());
-            crc = crc32_update(crc, reinterpret_cast<const unsigned char *>(data.data), raw_data_size);
+            crc = crc32_update(crc, reinterpret_cast<const unsigned char *>(prepared.data), raw_data_size);
             crc = ~crc;
 
             std::ofstream f(path, std::ios::binary);
@@ -153,7 +167,7 @@ namespace pw
 
             f.write(reinterpret_cast<const char *>(magic), 10);
             f.write(header.data(), static_cast<std::streamsize>(header.size()));
-            f.write(reinterpret_cast<const char *>(data.data), static_cast<std::streamsize>(raw_data_size));
+            f.write(reinterpret_cast<const char *>(prepared.data), static_cast<std::streamsize>(raw_data_size));
 
             const uint32_t cd_offset = 30 + fname_len + u_npy_size;
 
@@ -188,6 +202,7 @@ namespace pw
             if (!f)
                 throw std::runtime_error("cannot write " + path);
         }
+
 
         double tick_step(double span, int target)
         {
@@ -312,49 +327,100 @@ namespace pw
             throw std::runtime_error("cannot write " + full_png);
 
         const std::string coords_npy = (out_path.parent_path() / (out_path.stem().string() + "_coords.npy")).string();
-        save_npy(coords_npy, coords);
+        try
+        {
+            save_npy(coords_npy, coords);
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "[error] Failed to save '%s': %s\n", coords_npy.c_str(), e.what());
+        }
 
         const std::string coords_npz = (out_path.parent_path() / (out_path.stem().string() + "_coords.npz")).string();
-        save_npz(coords_npz, "coords", coords);
+        try
+        {
+            save_npz(coords_npz, "coords", coords);
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "[error] Failed to save '%s': %s\n", coords_npz.c_str(), e.what());
+        }
 
         if (!im.filled.empty() && !coords.empty())
         {
-            cv::Mat meta(coords.size(), CV_32FC4, cv::Scalar::all(std::numeric_limits<float>::quiet_NaN()));
-            for (int r = 0; r < meta.rows; ++r)
-            {
-                const cv::Vec3f *c = coords.ptr<cv::Vec3f>(r);
-                const unsigned char *f = im.filled.ptr<unsigned char>(r);
-                cv::Vec4f *out = meta.ptr<cv::Vec4f>(r);
-                for (int col = 0; col < meta.cols; ++col)
-                {
-                    if (!std::isfinite(c[col][0]))
-                        continue;
-                    out[col] = cv::Vec4f(c[col][0], c[col][1], c[col][2],
-                                         f[col] ? 1.0f : 0.0f);
-                }
-            }
             const std::string meta_npy =
                 (out_path.parent_path() / (out_path.stem().string() + "_coords_meta.npy")).string();
-            save_npy(meta_npy, meta);
-            std::printf("--> coords_meta (4 channels x,y,z,filled): '%s'\n", meta_npy.c_str());
+            try
+            {
+                cv::Mat meta(coords.size(), CV_32FC4, cv::Scalar::all(std::numeric_limits<float>::quiet_NaN()));
+                for (int r = 0; r < meta.rows; ++r)
+                {
+                    const cv::Vec3f *c = coords.ptr<cv::Vec3f>(r);
+                    const unsigned char *f = im.filled.ptr<unsigned char>(r);
+                    cv::Vec4f *out = meta.ptr<cv::Vec4f>(r);
+                    for (int col = 0; col < meta.cols; ++col)
+                    {
+                        if (!std::isfinite(c[col][0]))
+                            continue;
+                        out[col] = cv::Vec4f(c[col][0], c[col][1], c[col][2],
+                                             f[col] ? 1.0f : 0.0f);
+                    }
+                }
+                save_npy(meta_npy, meta);
+                std::printf("--> coords_meta (4 channels x,y,z,filled): '%s'\n", meta_npy.c_str());
+            }
+            catch (const std::exception &e)
+            {
+                std::fprintf(stderr, "[error] Failed to save '%s': %s\n", meta_npy.c_str(), e.what());
+            }
         }
 
-        cv::Mat values_f32;
-        im.values.convertTo(values_f32, CV_32FC1);
-
         const std::string values_npy = (out_path.parent_path() / (out_path.stem().string() + "_values.npy")).string();
-        save_npy(values_npy, values_f32);
-
         const std::string values_npz = (out_path.parent_path() / (out_path.stem().string() + "_values.npz")).string();
-        save_npz(values_npz, "values", values_f32);
+        try
+        {
+            cv::Mat values_f32;
+            im.values.convertTo(values_f32, CV_32FC1);
 
-        char range[64];
-        const int z_start = im.z_start, z_end = im.z_end;
-        std::snprintf(range, sizeof(range), " | Z = [%d -> %d]", z_start, z_end);
-        save_figure(output_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
-        std::printf("--> Image saved to: '%s' (full: '%s', coords.npy: '%s', coords.npz: '%s', values.npy: '%s', values.npz: '%s')\n",
-                    output_png.c_str(), full_png.c_str(),
-                    coords_npy.c_str(), coords_npz.c_str(),
-                    values_npy.c_str(), values_npz.c_str());
+            try
+            {
+                save_npy(values_npy, values_f32);
+            }
+            catch (const std::exception &e)
+            {
+                std::fprintf(stderr, "[error] Failed to save '%s': %s\n", values_npy.c_str(), e.what());
+            }
+
+            try
+            {
+                save_npz(values_npz, "values", values_f32);
+            }
+            catch (const std::exception &e)
+            {
+                std::fprintf(stderr, "[error] Failed to save '%s': %s\n", values_npz.c_str(), e.what());
+            }
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "[error] Failed to convert/save values ('%s' / '%s'): %s\n",
+                         values_npy.c_str(), values_npz.c_str(), e.what());
+        }
+
+        try
+        {
+            char range[64];
+            const int z_start = im.z_start, z_end = im.z_end;
+            std::snprintf(range, sizeof(range), " | Z = [%d -> %d]", z_start, z_end);
+            save_figure(output_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
+            std::printf("--> Image saved to: '%s' (full: '%s', coords.npy: '%s', coords.npz: '%s', values.npy: '%s', values.npz: '%s')\n",
+                        output_png.c_str(), full_png.c_str(),
+                        coords_npy.c_str(), coords_npz.c_str(),
+                        values_npy.c_str(), values_npz.c_str());
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "[error] Failed to save figure '%s': %s\n", output_png.c_str(), e.what());
+        }
+
     }
 } // namespace pw
