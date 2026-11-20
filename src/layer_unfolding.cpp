@@ -253,35 +253,53 @@ namespace pw
 
     void LayerUnfolding::print_region_seams() const
     {
-        std::printf("--> Coexistence of regions (minimum distance between traces at different Z levels):\n");
-        for (int z : {4020, 4180, 4340, 4500})
+        std::printf("--> Coexistence of regions:\n");
+        for (size_t a = 0; a < regions_.size(); ++a)
         {
-            const auto it = slices_.find(z);
-            if (it == slices_.end())
+            if (regions_[a].offset < 0)
                 continue;
-            for (size_t a = 0; a < regions_.size(); ++a)
-                for (size_t b = a + 1; b < regions_.size(); ++b)
+            for (size_t b = a + 1; b < regions_.size(); ++b)
+            {
+                if (regions_[b].offset < 0)
+                    continue;
+
+                const int z_lo = std::max(regions_[a].z_first, regions_[b].z_first);
+                const int z_hi = std::min(regions_[a].z_last, regions_[b].z_last);
+                if (z_hi < z_lo)
+                    continue;
+
+                const int dz = std::max(1, (z_hi - z_lo) / 4);
+                double best_global = 1e9;
+                int z_best = z_lo;
+                for (int z = z_lo; z <= z_hi; z += dz)
                 {
-                    bool pa_found = false, pb_found = false;
+                    const auto it = slices_.find(z);
+                    if (it == slices_.end())
+                        continue;
                     double best = 1e9;
                     for (const Placed &p1 : it->second)
                     {
                         if (p1.region != (int)a)
                             continue;
-                        pa_found = true;
                         for (const Placed &p2 : it->second)
                         {
                             if (p2.region != (int)b)
                                 continue;
-                            pb_found = true;
                             for (size_t i = 0; i < p1.x.size(); ++i)
                                 for (size_t j = 0; j < p2.x.size(); ++j)
                                     best = std::min(best, std::hypot<double>(p1.x[i] - p2.x[j], p1.y[i] - p2.y[j]));
                         }
                     }
-                    if (pa_found && pb_found && best < 200)
-                        std::printf("   - z=%d R%zu-R%zu: gap = %.1f voxels\n", z, a, b, best);
+                    if (best < best_global)
+                    {
+                        best_global = best;
+                        z_best = z;
+                    }
                 }
+                if (best_global < 200)
+                    std::printf("   - R%zu-R%zu (Z %d..%d, min at z=%d): gap = %.1f voxels\n",
+                                a, b, z_lo, z_hi, z_best, best_global);
+            }
         }
     }
 
