@@ -72,7 +72,11 @@ namespace pw
                     best = off == -half_thick ? v : std::max(best, v);
                 }
                 row[k] = std::isfinite(best) ? best : 0.0;
-                where[k] = cv::Vec3f(static_cast<float>(r.xs[k]), static_cast<float>(r.ys[k]), static_cast<float>(z));
+                const int z_src = (k < static_cast<int>(r.zs.size()) && r.zs[k] != std::numeric_limits<int>::min())
+                                      ? r.zs[k]
+                                      : z;
+                where[k] = cv::Vec3f(static_cast<float>(r.xs[k]), static_cast<float>(r.ys[k]),
+                                     static_cast<float>(z_src));
             }
         }
 
@@ -81,14 +85,29 @@ namespace pw
         {
             switch (CV_MAT_DEPTH(m.cv_type()))
             {
-            case CV_8U: sample_columns<unsigned char>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_8S: sample_columns<signed char>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_16U: sample_columns<unsigned short>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_16S: sample_columns<short>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_32S: sample_columns<int>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_32F: sample_columns<float>(m, r, half_thick, z, k0, k1, row, where); break;
-            case CV_64F: sample_columns<double>(m, r, half_thick, z, k0, k1, row, where); break;
-            default: throw std::runtime_error("unsupported voxel type");
+            case CV_8U:
+                sample_columns<unsigned char>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_8S:
+                sample_columns<signed char>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_16U:
+                sample_columns<unsigned short>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_16S:
+                sample_columns<short>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_32S:
+                sample_columns<int>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_32F:
+                sample_columns<float>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            case CV_64F:
+                sample_columns<double>(m, r, half_thick, z, k0, k1, row, where);
+                break;
+            default:
+                throw std::runtime_error("unsupported voxel type");
             }
         }
     } // namespace

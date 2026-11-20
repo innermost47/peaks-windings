@@ -83,7 +83,7 @@ namespace pw
 
         void save_npy(const std::string &path, const cv::Mat &data)
         {
-            CV_Assert(data.type() == CV_32FC3 && data.isContinuous());
+            CV_Assert(data.isContinuous() && (data.type() == CV_32FC1 || data.type() == CV_32FC3));
             const std::string header = make_npy_header(data);
             std::ofstream f(path, std::ios::binary);
             const unsigned char magic[10] = {0x93, 'N', 'U', 'M', 'P', 'Y', 1, 0,
@@ -91,7 +91,8 @@ namespace pw
                                              static_cast<unsigned char>(header.size() >> 8)};
             f.write(reinterpret_cast<const char *>(magic), 10);
             f.write(header.data(), static_cast<std::streamsize>(header.size()));
-            f.write(reinterpret_cast<const char *>(data.data), static_cast<std::streamsize>(data.total() * 3 * sizeof(float)));
+            f.write(reinterpret_cast<const char *>(data.data),
+                    static_cast<std::streamsize>(data.total() * data.elemSize()));
             if (!f)
                 throw std::runtime_error("cannot write " + path);
         }
@@ -113,7 +114,13 @@ namespace pw
             const size_t npy_size = 10 + header.size() + raw_data_size;
 
             if (npy_size >= 0xFFFFFFFFULL)
-                throw std::runtime_error("Array exceeds 4 GB limit of standard 32-bit ZIP");
+            {
+                std::fprintf(stderr,
+                             "[warning] '%s': the array (%.2f GB) exceeds the 4 GB limit of standard ZIP; "
+                             "no .npz written (use the .npy instead).\n",
+                             path.c_str(), npy_size / 1073741824.0);
+                return;
+            }
 
             uint32_t crc = 0xFFFFFFFF;
             crc = crc32_update(crc, magic, 10);
@@ -309,6 +316,10 @@ namespace pw
 
         cv::Mat values_f32;
         im.values.convertTo(values_f32, CV_32FC1);
+
+        const std::string values_npy = (out_path.parent_path() / (out_path.stem().string() + "_values.npy")).string();
+        save_npy(values_npy, values_f32);
+
         const std::string values_npz = (out_path.parent_path() / (out_path.stem().string() + "_values.npz")).string();
         save_npz(values_npz, "values", values_f32);
 
@@ -316,7 +327,9 @@ namespace pw
         const int z_start = im.z_start, z_end = im.z_end;
         std::snprintf(range, sizeof(range), " | Z = [%d -> %d]", z_start, z_end);
         save_figure(output_png, gray, im.title + range, z_start, z_end, im.x_label, im.x_max);
-        std::printf("--> Image saved to: '%s' (full: '%s', npy: '%s', npz: '%s')\n",
-                    output_png.c_str(), full_png.c_str(), coords_npy.c_str(), coords_npz.c_str());
+        std::printf("--> Image saved to: '%s' (full: '%s', coords.npy: '%s', coords.npz: '%s', values.npy: '%s', values.npz: '%s')\n",
+                    output_png.c_str(), full_png.c_str(),
+                    coords_npy.c_str(), coords_npz.c_str(),
+                    values_npy.c_str(), values_npz.c_str());
     }
 } // namespace pw

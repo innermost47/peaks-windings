@@ -10,6 +10,7 @@ namespace pw
     struct Rail
     {
         std::vector<double> xs, ys, nx, ny; // the sheet in one slice and its unit normal, at every flat position
+        std::vector<int> zs;
     };
 
 } // namespace pw

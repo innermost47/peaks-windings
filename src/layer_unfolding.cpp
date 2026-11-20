@@ -7,6 +7,7 @@
 #include <cmath>
 #include <numeric>
 #include <unordered_map>
+#include <limits>
 
 namespace pw
 {
@@ -387,6 +388,7 @@ namespace pw
                         r.ys[c] = near.ys[c];
                         r.nx[c] = near.nx[c];
                         r.ny[c] = near.ny[c];
+                        r.zs[c] = near.zs[c];
                         --missing;
                     }
             }
@@ -401,6 +403,7 @@ namespace pw
         r.ys.assign(n, NaN);
         r.nx.assign(n, NaN);
         r.ny.assign(n, NaN);
+        r.zs.assign(n, std::numeric_limits<int>::min());
         const auto it = slices_.find(z);
         if (it == slices_.end() || n < 2)
             return r;
@@ -415,6 +418,7 @@ namespace pw
             r.ys[c] = y;
             r.nx[c] = -ty / norm;
             r.ny[c] = tx / norm;
+            r.zs[c] = z;
         };
         for (const Placed &p : it->second)
         {
