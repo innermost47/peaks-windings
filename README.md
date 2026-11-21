@@ -8,7 +8,7 @@ From a Zarr CT volume, `peaks_windings` extracts the individual papyrus layers (
 
 ## Some Results
 
-*Unrolled layer −77 of PHerc0125, at native CT resolution (1 pixel = 1 voxel). Each column is one position along the sheet, the same in every slice.*
+*Unrolled layer −77 of PHerc0125, at native CT resolution (1 pixel = 1 voxel).*
 
 ![Unrolled layer −77, native resolution](docs/images/layer_-77_z6500-z8500-A.png)
 
@@ -16,16 +16,30 @@ From a Zarr CT volume, `peaks_windings` extracts the individual papyrus layers (
 
 ![Unrolled layer −77, native resolution](docs/images/layer_-77_z6500-z8500-E.png)
 
-Command used:
+*Unrolled layer −19 of PHerc0125, at native CT resolution (1 pixel = 1 voxel).*
+
+![Unrolled layer −19, native resolution](docs/images/layer_-19_z14500-z16500-A.png)
+
+![Unrolled layer −19, native resolution](docs/images/layer_-19_z14500-z16500-B.png)
+
+![Unrolled layer −19, native resolution](docs/images/layer_-19_z14500-z16500-C.png)
+
+Commands used:
 
 ```sh
-# Unrolled layer, native resolution
 unroll_layer --scroll-name PHerc0125 \
              --scroll s3://vesuvius-challenge-open-data/PHerc0125/volumes/20250821151825-9.362um-1.2m-113keV-masked.zarr \
              --layer -77 --memory-slices 16 --inherit-radius 13 \
              --max-gap 150 --max-turn 60 --max-pull 3 \
              --fill-z 5 --fill-px 10 --slab 3 \
-             --max-width 0 --z-min 2200 --z-max 16000
+             --max-width 0 --z-min 6500 --z-max 8500
+
+unroll_layer --scroll-name PHerc0125 \
+             --scroll s3://vesuvius-challenge-open-data/PHerc0125/volumes/20250821151825-9.362um-1.2m-113keV-masked.zarr \
+             --layer -19 --memory-slices 16 --inherit-radius 13 \
+             --max-gap 150 --max-turn 60 --max-pull 3 \
+             --fill-z 5 --fill-px 10 --slab 3 \
+             --max-width 0 --z-min 14500 --z-max 16500
 ```
 
 **Reproducibility.** CT volume: `s3://vesuvius-challenge-open-data/PHerc0125/volumes/20250821151825-9.362um-1.2m-113keV-masked.zarr` (level `0/`, shape `(20840, 8387, 8387)`, chunks `(128, 128, 128)`, `|u1`, no compressor). Wall time for (1): ≈ 150 s, of which ≈ 25 s reading the CT chunks the slab crosses (1.1 GB read). Each `unroll_layer` run produces a view of **one spire**, not the whole scroll — end-to-end stitching is beyond this repository (see Architecture & Implementation Notes). Column misalignments along X in filled regions of `_full.png` are visible at high zoom; `_coords_meta.npy` gives per-pixel provenance.
